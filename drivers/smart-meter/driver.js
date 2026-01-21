@@ -67,6 +67,9 @@ class GlowmarktUKSmartMeter_driver extends Driver {
 
       // map these to an array of devices for pairing
       let devices = virtualEntities.map(veToDevice);
+      this.log('Virtual Entities: ' + devices.length);
+      this.log('Virtual Entity 0 name: ' + devices[0].name);
+      this.log('Virtual Entity 0 elec_cons_res: ' + devices[0].store.elec_cons_res);
 
       function veToDevice(virtualEntity) {
         // find a resource object in the resources array whose name property is 'electricity consumption'
