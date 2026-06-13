@@ -52,7 +52,7 @@ class GlowmarktUKSmartMeter_device extends Device {
 		  this.log('Meter read API returned error, attempting token refresh');
 		  token = await this.refreshToken();
 		  if (!token) throw new Error('Token refresh failed');
-		  energyRes = await fetchCurrentPower(token);
+		  energyRes = await fetchMeterReading(token);
 		  if (energyRes.error) throw new Error(`Meter read API error after token refresh: ${JSON.stringify(energyRes.error)}`);
 		}
 		if (!this.getAvailable()) this.setAvailable().catch(this.error);
