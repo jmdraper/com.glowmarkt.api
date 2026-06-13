@@ -19,5 +19,8 @@
   },
   "1.1.4": {
     "en": "Fixed device repeatedly going unavailable: interval clearing, token refresh on expiry, tariff errors no longer affect device availability"
+  },
+  "1.1.5": {
+    "en": "Fixed bugs causing constant offline/online flips"
   }
 }
