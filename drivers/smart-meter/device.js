@@ -22,6 +22,11 @@ class GlowmarktUKSmartMeter_device extends Device {
       headers: { 'Content-Type': 'application/json', 'token': token, 'applicationId': BRIGHT_APP_ID }
     }).then(r => r.json());
 
+	const fetchMeterReading = (token) => fetch(`https://api.glowmarkt.com/api/v0-1/resource/${elec_cons_res}/meterread`, {
+	  method: 'GET',
+	  headers: { 'Content-Type': 'application/json', 'token': token, 'applicationId': BRIGHT_APP_ID }
+	}).then(r => r.json());
+
     const fetchTariff = (token) => fetch(`https://api.glowmarkt.com/api/v0-1/resource/${elec_cons_res}/tariff`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json', 'token': token, 'applicationId': BRIGHT_APP_ID }
@@ -30,16 +35,29 @@ class GlowmarktUKSmartMeter_device extends Device {
     const updateDevice = async () => {
       try {
         let token = this.getStoreValue('token');
-        let resource = await fetchCurrentPower(token);
-        if (resource.error) {
+
+        let powerRes = await fetchCurrentPower(token);
+        if (powerRes.error) {
           this.log('Power API returned error, attempting token refresh');
           token = await this.refreshToken();
           if (!token) throw new Error('Token refresh failed');
-          resource = await fetchCurrentPower(token);
-          if (resource.error) throw new Error(`Power API error after token refresh: ${JSON.stringify(resource.error)}`);
+          powerRes = await fetchCurrentPower(token);
+          if (powerRes.error) throw new Error(`Power API error after token refresh: ${JSON.stringify(powerRes.error)}`);
         }
         if (!this.getAvailable()) this.setAvailable().catch(this.error);
-        this.setCapabilityValue('measure_power', resource.data[0][1]).catch(this.error);
+        this.setCapabilityValue('measure_power', powerRes.data[0][1]).catch(this.error);
+
+		let energyRes = await fetchMeterReading(token);
+		if (energyRes.error) {
+		  this.log('Meter read API returned error, attempting token refresh');
+		  token = await this.refreshToken();
+		  if (!token) throw new Error('Token refresh failed');
+		  energyRes = await fetchCurrentPower(token);
+		  if (energyRes.error) throw new Error(`Meter read API error after token refresh: ${JSON.stringify(energyRes.error)}`);
+		}
+		if (!this.getAvailable()) this.setAvailable().catch(this.error);
+		let kWh = energyRes.data[0][1] / 1000;
+		this.setCapabilityValue('meter_power.imported', kWh).catch(this.error);
       } catch (error) {
         this.error('updateDevice failed:', error);
         if (this.getAvailable()) {
