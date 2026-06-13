@@ -2,8 +2,7 @@
 
 const { Device } = require('homey');
 const fetch = require('node-fetch');
-  // app ID for Bright app - used in API calls to Glowmarkt API
-  const BRIGHT_APP_ID = 'b0f1b774-a586-4f72-9edd-27ead8aa7a8d';
+const BRIGHT_APP_ID = 'b0f1b774-a586-4f72-9edd-27ead8aa7a8d';
 
 class GlowmarktUKSmartMeter_device extends Device {
 
@@ -13,89 +12,69 @@ class GlowmarktUKSmartMeter_device extends Device {
   async onInit() {
     this.log('Display and CAD (API) initialized');
 
-    // get IDs from store
-    let token = this.getStoreValue('token');
-    let elec_cons_res = this.getStoreValue('elec_cons_res');
+    const elec_cons_res = this.getStoreValue('elec_cons_res');
 
-    // set device as initially unavailable
+    // Set device unavailable until first successful poll
     this.setUnavailable().catch(this.error);
 
-    // core function that fetches latest value, updates device value and sets device availability
-    async function updateDevice(resourceId, thisDev) {
+    const fetchCurrentPower = (token) => fetch(`https://api.glowmarkt.com/api/v0-1/resource/${elec_cons_res}/current`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'token': token, 'applicationId': BRIGHT_APP_ID }
+    }).then(r => r.json());
+
+    const fetchTariff = (token) => fetch(`https://api.glowmarkt.com/api/v0-1/resource/${elec_cons_res}/tariff`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'token': token, 'applicationId': BRIGHT_APP_ID }
+    }).then(r => r.json());
+
+    const updateDevice = async () => {
       try {
-        // fetch current resource value from API
-        let response  = await fetch(`https://api.glowmarkt.com/api/v0-1/resource/${resourceId}/current`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'token': token,
-            'applicationId': BRIGHT_APP_ID
-        }});
-        // parse JSON
-        let resource = await response.json();
-
-        // if JSON contains value, set device available if it wasn't and then set its value
-        if (!resource.error) {
-          // if device was unavailable, set available
-          if (!thisDev.getAvailable()) {
-            thisDev.setAvailable().catch();
-          }
-          // set measure_power value on device
-          thisDev.setCapabilityValue('measure_power', resource.data[0][1]).catch();
-        } else {
-          // if response contained an error, set device unavailable
-          throw new Error('Get current power API call returned error (likely credentials did not match)');
+        let token = this.getStoreValue('token');
+        let resource = await fetchCurrentPower(token);
+        if (resource.error) {
+          this.log('Power API returned error, attempting token refresh');
+          token = await this.refreshToken();
+          if (!token) throw new Error('Token refresh failed');
+          resource = await fetchCurrentPower(token);
+          if (resource.error) throw new Error(`Power API error after token refresh: ${JSON.stringify(resource.error)}`);
         }
-      } catch(error) {
-        // if device was available, set as unavailable
-        if (thisDev.getAvailable()) {
-          thisDev.log('Device set as unavailable');
-          thisDev.setUnavailable().catch();
+        if (!this.getAvailable()) this.setAvailable().catch(this.error);
+        this.setCapabilityValue('measure_power', resource.data[0][1]).catch(this.error);
+      } catch (error) {
+        this.error('updateDevice failed:', error);
+        if (this.getAvailable()) {
+          this.log('Device set as unavailable');
+          this.setUnavailable().catch(this.error);
         }
       }
-    }
+    };
 
-   // get latest tariff and update
-   async function updateTariff(resourceId, thisDev) {
-    try {
-      // fetch current resource value from API
-      let response  = await fetch(`https://api.glowmarkt.com/api/v0-1/resource/${resourceId}/tariff`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'token': token,
-          'applicationId': BRIGHT_APP_ID
-      }});
-      // parse JSON
-      let resource = await response.json();
-
-      // if JSON contains value, set device available if it wasn't and then set its value
-      if (!resource.error) {
-        // if device was unavailable, set available
-        if (!thisDev.getAvailable()) {
-          thisDev.setAvailable().catch();
+    // updateTariff does not control device availability — a missing/failed tariff
+    // should not mark the device unavailable if the power API is working.
+    const updateTariff = async () => {
+      try {
+        let token = this.getStoreValue('token');
+        let resource = await fetchTariff(token);
+        if (resource.error) {
+          this.log('Tariff API returned error, attempting token refresh');
+          token = await this.refreshToken();
+          if (!token) throw new Error('Token refresh failed');
+          resource = await fetchTariff(token);
+          if (resource.error) throw new Error(`Tariff API error after token refresh: ${JSON.stringify(resource.error)}`);
         }
-        // set measure_power value on device
-        thisDev.setCapabilityValue('tariff', Number(resource.data[0].currentRates.rate)).catch();
-      } else {
-        // if response contained an error, set device unavailable
-        throw new Error('Get current tariff API call returned error (likely credentials did not match)');
+        this.setCapabilityValue('tariff', Number(resource.data[0].currentRates.rate)).catch(this.error);
+      } catch (error) {
+        this.error('updateTariff failed:', error);
       }
-    } catch(error) {
-      // if device was available, set as unavailable
-      if (thisDev.getAvailable()) {
-        thisDev.log('Device set as unavailable');
-        thisDev.setUnavailable().catch();
-      }
-    }
-  }
+    };
 
-    // initial poll
-    updateDevice(elec_cons_res, this);
-    updateTariff(elec_cons_res, this);
+    // Fire initial polls without awaiting — awaiting setAvailable() inside onInit
+    // breaks the Homey pairing wizard (device state must not be set before onAdded fires).
+    updateDevice();
+    updateTariff();
 
     // if pollFrequency not already set, get poll frequency from device settings or default to 10
-    let settings = this.getSettings();
+    const settings = this.getSettings();
     if (!this.pollFrequency) {
       if (settings.pollFrequency) {
         this.pollFrequency = (settings.pollFrequency * 1000);
@@ -105,17 +84,42 @@ class GlowmarktUKSmartMeter_device extends Device {
         this.pollFrequency = 10000;
       }
     }
-    // poll every {pollFrequency} seconds and set measure_power capability to the power value retrieved from API
-    this.log(`Initiating power polling with frequency ${this.pollFrequency}`);
-    this.poll = this.homey.setInterval(() => {
-      updateDevice(elec_cons_res, this);
-    }, this.pollFrequency);
 
-    // poll every minute and set tariff capability to the power value retrieved from API
-    this.log(`Initiating tariff polling`);
-    this.tariffPoll = this.homey.setInterval(() => {
-      updateTariff(elec_cons_res, this);
-    }, 60000);
+    this.log(`Initiating power polling with frequency ${this.pollFrequency}`);
+    this.poll = this.homey.setInterval(updateDevice, this.pollFrequency);
+
+    this.log('Initiating tariff polling');
+    this.tariffPoll = this.homey.setInterval(updateTariff, 60000);
+  }
+
+  /**
+   * Refreshes the API token using stored credentials. Returns the new token or null on failure.
+   * Concurrent calls are coalesced — only one refresh runs at a time.
+   */
+  async refreshToken() {
+    if (this.refreshingToken) return null;
+    this.refreshingToken = true;
+    try {
+      const settings = this.getSettings();
+      const authResponse = await fetch('https://api.glowmarkt.com/api/v0-1/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'applicationId': BRIGHT_APP_ID },
+        body: JSON.stringify({ username: settings.username, password: settings.password })
+      });
+      const authJSON = await authResponse.json();
+      if (authJSON.valid) {
+        await this.setStoreValue('token', authJSON.token);
+        this.log('Token refreshed successfully');
+        return authJSON.token;
+      }
+      this.error('Token refresh failed: credentials rejected by API');
+      return null;
+    } catch (error) {
+      this.error('Token refresh failed:', error);
+      return null;
+    } finally {
+      this.refreshingToken = false;
+    }
   }
 
   /**
@@ -136,33 +140,17 @@ class GlowmarktUKSmartMeter_device extends Device {
   async onSettings({ oldSettings, newSettings, changedKeys }) {
     this.log('Display and CAD (API) settings changed');
 
-    // if username or password changed, get new token
+    // if username or password changed, get new token from API and write it to token in device store
     if (changedKeys.includes('username') || changedKeys.includes('password')) {
-      // get new token from API and write it to token in device store
       this.log('Credentials changed - getting new token from API');
-      const auth = {
-        "username": newSettings.username,
-        "password": newSettings.password
-      };
-
-      let authResponse = await fetch('https://api.glowmarkt.com/api/v0-1/auth', {
-        method: 'POST', 
-        headers: {
-          'Content-Type': 'application/json',
-          'applicationId': GlowmarktApp.APP_ID
-        },
-        body: JSON.stringify(auth)
+      const authResponse = await fetch('https://api.glowmarkt.com/api/v0-1/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'applicationId': BRIGHT_APP_ID },
+        body: JSON.stringify({ username: newSettings.username, password: newSettings.password })
       });
-      let authJSON = await authResponse.json();
-      // if authenticated, set token from response otherwise void the token
-      let token;
-      if (authJSON.valid) {
-        token = authJSON.token;
-      } else {
-        token = 'VOID';
-      }
-      this.setStoreValue('token',token);
-    };
+      const authJSON = await authResponse.json();
+      await this.setStoreValue('token', authJSON.valid ? authJSON.token : 'VOID');
+    }
 
     // if poll frequency changed, update variable
     if (changedKeys.includes('pollFrequency')) {
@@ -171,15 +159,13 @@ class GlowmarktUKSmartMeter_device extends Device {
 
     // for all changes, cancel existing polling and re-initialise device
     this.log('Re-initialising device');
-    if (this.poll) {
-      clearInterval(this.poll);
-    };
+    if (this.poll) this.homey.clearInterval(this.poll);
+    if (this.tariffPoll) this.homey.clearInterval(this.tariffPoll);
     this.onInit();
   }
 
   /**
    * onRenamed is called when the user updates the device's name.
-   * This method can be used this to synchronise the name to the device.
    * @param {string} name The new name
    */
   async onRenamed(name) {
@@ -194,7 +180,7 @@ class GlowmarktUKSmartMeter_device extends Device {
     if (this.poll) {
       this.homey.clearInterval(this.poll);
       this.homey.clearInterval(this.tariffPoll);
-    };
+    }
   }
 }
 
