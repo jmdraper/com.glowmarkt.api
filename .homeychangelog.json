@@ -16,5 +16,8 @@
   },
   "1.1.3": {
     "en": "Fixed potential issue on app uninstall"
+  },
+  "1.1.4": {
+    "en": "Fixed device repeatedly going unavailable: interval clearing, token refresh on expiry, tariff errors no longer affect device availability"
   }
 }
