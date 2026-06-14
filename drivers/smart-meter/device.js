@@ -48,6 +48,7 @@ class GlowmarktUKSmartMeter_device extends Device {
           powerRes = await fetchCurrentPower(token);
           if (powerRes.error) throw new Error(`Power API error after token refresh: ${JSON.stringify(powerRes.error)}`);
         }
+        if (!powerRes.data?.[0]) throw new Error(`Power API returned no data: ${JSON.stringify(powerRes)}`);
         if (!this.getAvailable()) this.setAvailable().catch(this.error);
         this.setCapabilityValue('measure_power', powerRes.data[0][1]).catch(this.error);
 
@@ -59,6 +60,7 @@ class GlowmarktUKSmartMeter_device extends Device {
           energyRes = await fetchMeterReading(token);
           if (energyRes.error) throw new Error(`Meter read API error after token refresh: ${JSON.stringify(energyRes.error)}`);
         }
+        if (!energyRes.data?.[0]) throw new Error(`Meter read API returned no data: ${JSON.stringify(energyRes)}`);
         if (!this.getAvailable()) this.setAvailable().catch(this.error);
         const kWh = energyRes.data[0][1] / 1000;
         this.setCapabilityValue('meter_power.imported', kWh).catch(this.error);
