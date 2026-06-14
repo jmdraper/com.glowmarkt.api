@@ -6,11 +6,11 @@
   "capabilities": [
     "meter_power.imported",
     "measure_power",
-	"tariff"
+    "tariff"
   ],
   "energy": {
     "cumulative": true,
-	"cumulativeImportedCapability": "meter_power.imported"
+    "cumulativeImportedCapability": "meter_power.imported"
   },
   "platforms": [
     "local"
