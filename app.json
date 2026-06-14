@@ -76,11 +76,13 @@
       },
       "class": "other",
       "capabilities": [
+        "meter_power.imported",
         "measure_power",
         "tariff"
       ],
       "energy": {
-        "cumulative": true
+        "cumulative": true,
+        "cumulativeImportedCapability": "meter_power.imported"
       },
       "platforms": [
         "local"
