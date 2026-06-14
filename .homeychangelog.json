@@ -22,5 +22,8 @@
   },
   "1.1.5": {
     "en": "Fixed bugs causing constant offline/online flips"
+  },
+  "1.1.6": {
+    "en": "Added cumulative energy metering"
   }
 }
