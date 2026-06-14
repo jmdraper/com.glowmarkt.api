@@ -25,5 +25,8 @@
   },
   "1.1.6": {
     "en": "Added cumulative energy metering"
+  },
+  "1.1.7": {
+    "en": "Another fix for constant device disconnections"
   }
 }
