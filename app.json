@@ -61,6 +61,100 @@
   "flow": {
     "triggers": [
       {
+        "id": "cloud_gas_new_day_figures",
+        "title": {
+          "en": "New day's figures"
+        },
+        "hint": {
+          "en": "Fires once for each day of gas, when Glowmarkt receives it, usually a day or more later. If several days arrive at once, it fires once for each, oldest first. The cost is for energy only, without the standing charge."
+        },
+        "tokens": [
+          {
+            "name": "date",
+            "type": "string",
+            "title": {
+              "en": "Date"
+            },
+            "example": "Tue 27 Oct"
+          },
+          {
+            "name": "gas_kwh",
+            "type": "number",
+            "title": {
+              "en": "Gas (kWh)"
+            },
+            "example": 28.081
+          },
+          {
+            "name": "gas_cost",
+            "type": "number",
+            "title": {
+              "en": "Gas cost (£)"
+            },
+            "example": 2.22
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_cloud_gas"
+          }
+        ]
+      },
+      {
+        "id": "cloud_gas_data_late",
+        "title": {
+          "en": "Data is late"
+        },
+        "hint": {
+          "en": "Glowmarkt's gas data is more than 3 days old. Fires once, then again only after the data has caught up."
+        },
+        "tokens": [
+          {
+            "name": "days",
+            "type": "number",
+            "title": {
+              "en": "Days behind"
+            },
+            "example": 4
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_cloud_gas"
+          }
+        ]
+      },
+      {
+        "id": "cloud_gas_account_attention",
+        "title": {
+          "en": "Account needs attention"
+        },
+        "hint": {
+          "en": "Fires once when logging in to Glowmarkt has failed for 30 minutes, or Glowmarkt refuses this meter even after logging in again. It fires again only after the account has worked in between."
+        },
+        "tokens": [
+          {
+            "name": "reason",
+            "type": "string",
+            "title": {
+              "en": "Reason"
+            },
+            "example": "login failing"
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_cloud_gas"
+          }
+        ]
+      },
+      {
         "id": "glow_local_electricity_tariff_changed",
         "title": {
           "en": "Tariff changed"
@@ -452,7 +546,7 @@
           "en": "New day's figures"
         },
         "hint": {
-          "en": "Fires once a day, when Glowmarkt has the meter's final figures for the previous day, usually during the morning. Costs are for energy only, without the standing charge."
+          "en": "Fires once a day, when Glowmarkt has the meter's own figures for the previous day. Costs are for energy only, without the standing charge."
         },
         "tokens": [
           {
@@ -478,22 +572,6 @@
               "en": "Electricity cost (£)"
             },
             "example": 2.87
-          },
-          {
-            "name": "gas_kwh",
-            "type": "number",
-            "title": {
-              "en": "Gas (kWh)"
-            },
-            "example": 28.081
-          },
-          {
-            "name": "gas_cost",
-            "type": "number",
-            "title": {
-              "en": "Gas cost (£)"
-            },
-            "example": 2.22
           }
         ],
         "args": [
@@ -506,6 +584,38 @@
       }
     ],
     "conditions": [
+      {
+        "id": "cloud_gas_up_to_date",
+        "title": {
+          "en": "Data !{{is|isn't}} up to date"
+        },
+        "hint": {
+          "en": "Up to date while Glowmarkt's gas data is no more than 3 days old."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_cloud_gas"
+          }
+        ]
+      },
+      {
+        "id": "cloud_gas_account_ok",
+        "title": {
+          "en": "Account !{{is|isn't}} OK"
+        },
+        "hint": {
+          "en": "Not OK from when Account needs attention fires until the account works again."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_cloud_gas"
+          }
+        ]
+      },
       {
         "id": "glow_local_electricity_is_reporting",
         "title": {
@@ -612,6 +722,109 @@
     ]
   },
   "drivers": [
+    {
+      "name": {
+        "en": "Gas meter (cloud)"
+      },
+      "class": "sensor",
+      "capabilities": [
+        "gas_day",
+        "gas_day_energy",
+        "gas_day_cost",
+        "tariff",
+        "standing_charge",
+        "data_up_to"
+      ],
+      "platforms": [
+        "local"
+      ],
+      "connectivity": [
+        "cloud"
+      ],
+      "images": {
+        "small": "/drivers/glow_cloud_gas/assets/images/small.png",
+        "large": "/drivers/glow_cloud_gas/assets/images/large.png",
+        "xlarge": "/drivers/glow_cloud_gas/assets/images/xlarge.png"
+      },
+      "pair": [
+        {
+          "id": "login_credentials",
+          "template": "login_credentials",
+          "options": {
+            "logo": "/drivers/glow_cloud_gas/assets/images/bright75.png",
+            "title": {
+              "en": "Login with your Bright App credentials"
+            },
+            "usernameLabel": {
+              "en": "E-mail address"
+            },
+            "usernamePlaceholder": {
+              "en": "john@doe.com"
+            },
+            "passwordLabel": {
+              "en": "Password"
+            },
+            "passwordPlaceholder": {
+              "en": "password"
+            }
+          }
+        },
+        {
+          "id": "list_devices",
+          "template": "list_devices",
+          "navigation": {
+            "next": "add_my_devices",
+            "prev": "login_credentials"
+          }
+        },
+        {
+          "id": "add_my_devices",
+          "template": "add_devices"
+        }
+      ],
+      "id": "glow_cloud_gas",
+      "settings": [
+        {
+          "id": "username",
+          "type": "text",
+          "label": {
+            "en": "Username"
+          },
+          "value": "username",
+          "hint": {
+            "en": "The username for your Bright app account"
+          }
+        },
+        {
+          "id": "password",
+          "type": "password",
+          "label": {
+            "en": "Password"
+          },
+          "value": "password",
+          "hint": {
+            "en": "The password for your Bright app account"
+          }
+        },
+        {
+          "id": "gas_standing_charge",
+          "type": "number",
+          "label": {
+            "en": "Standing charge"
+          },
+          "value": 0,
+          "min": 0,
+          "max": 1000,
+          "step": 0.01,
+          "units": {
+            "en": "p/day"
+          },
+          "hint": {
+            "en": "Used only if Glowmarkt has never given a gas tariff for this meter; leave at 0 if you don't want it shown."
+          }
+        }
+      ]
+    },
     {
       "name": {
         "en": "Glow electricity meter (local)"
@@ -837,7 +1050,7 @@
     },
     {
       "name": {
-        "en": "Display and CAD (API)"
+        "en": "Electricity meter (cloud)"
       },
       "class": "other",
       "capabilities": [
@@ -950,23 +1163,6 @@
           },
           "hint": {
             "en": "Meter stopped reporting fires when Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than this."
-          }
-        },
-        {
-          "id": "gas_standing_charge",
-          "type": "number",
-          "label": {
-            "en": "Gas standing charge"
-          },
-          "value": 0,
-          "min": 0,
-          "max": 1000,
-          "step": 0.01,
-          "units": {
-            "en": "p/day"
-          },
-          "hint": {
-            "en": "Only for meters with gas. Used only if Glowmarkt has never given a gas tariff for this meter; leave at 0 if you don't want it shown."
           }
         }
       ]

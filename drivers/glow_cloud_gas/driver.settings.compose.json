@@ -1,0 +1,41 @@
+[
+  {
+    "id": "username",
+    "type": "text",
+    "label": {
+      "en": "Username"
+    },
+    "value": "username",
+    "hint": {
+      "en": "The username for your Bright app account"
+    }
+  },
+  {
+    "id": "password",
+    "type": "password",
+    "label": {
+      "en": "Password"
+    },
+    "value": "password",
+    "hint": {
+      "en": "The password for your Bright app account"
+    }
+  },
+  {
+    "id": "gas_standing_charge",
+    "type": "number",
+    "label": {
+      "en": "Standing charge"
+    },
+    "value": 0,
+    "min": 0,
+    "max": 1000,
+    "step": 0.01,
+    "units": {
+      "en": "p/day"
+    },
+    "hint": {
+      "en": "Used only if Glowmarkt has never given a gas tariff for this meter; leave at 0 if you don't want it shown."
+    }
+  }
+]

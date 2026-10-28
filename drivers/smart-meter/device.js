@@ -1,24 +1,16 @@
 'use strict';
 
-const { Device } = require('homey');
-const { apiGet, tokenExpiry, summarise, apiError } = require('../../lib/cloud/glowmarkt');
-const { maskPostcodes } = require('../../lib/glow/mask');
+const CloudDevice = require('../../lib/cloud/CloudDevice');
+const { apiError } = require('../../lib/cloud/glowmarkt');
 const StalenessTracker = require('../../lib/glow/StalenessTracker');
 const ExportingTracker = require('../../lib/ExportingTracker');
-const AccountHealth = require('../../lib/cloud/AccountHealth');
-const CloudReadings = require('../../lib/cloud/CloudReadings');
 const ImportToday = require('../../lib/cloud/ImportToday');
 const { liveElectricityResource } = require('../../lib/cloud/resources');
-const { nextTariffAt } = require('../../lib/cloud/TariffSource');
-const { dayToAnnounce } = require('../../lib/cloud/newDay');
+const { electricityDayToAnnounce } = require('../../lib/cloud/newDay');
 const {
   addDays, londonDate, dayLabel, dateTimeLabel,
 } = require('../../lib/cloud/days');
 
-// renew the token when less than this much of its life remains
-const TOKEN_RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
-// how long to wait before trying again when access is refused even after a fresh login
-const ACCESS_REFUSED_RETRY_MS = 60 * 60 * 1000;
 // settings that need polling restarted when they change
 const POLLING_SETTINGS = ['username', 'password', 'pollFrequency'];
 const MINUTE_MS = 60 * 1000;
@@ -27,25 +19,24 @@ const READINGS_EVERY_MS = 15 * MINUTE_MS;
 
 // added to every device, including ones paired before they existed
 const CAPABILITIES = ['meter_power.imported', 'standing_charge', 'electricity_today', 'electricity_yesterday', 'electricity_cost_yesterday', 'data_up_to'];
-// added once the entry is known to have gas
-const GAS_CAPABILITIES = ['gas_day', 'gas_day_energy', 'gas_day_cost', 'tariff.gas', 'standing_charge.gas'];
-const CAPABILITY_TITLES = {
-  'tariff.gas': 'Gas unit rate',
-  'standing_charge.gas': 'Gas standing charge',
-};
+// gas moved to the cloud gas device before 1.3.0 was published; only test installs have these
+const REMOVED_CAPABILITIES = ['gas_day', 'gas_day_energy', 'gas_day_cost', 'tariff.gas', 'standing_charge.gas'];
 
-class GlowmarktUKSmartMeter_device extends Device {
+class GlowmarktUKSmartMeter_device extends CloudDevice {
 
   /**
    * onInit is called when the device is initialized.
    */
   async onInit() {
     this.log('Display and CAD (API) initialized');
+    this.commodity = 'electricity';
 
     for (const capability of CAPABILITIES) await this.ensureCapability(capability);
+    for (const capability of REMOVED_CAPABILITIES) {
+      if (this.hasCapability(capability)) await this.removeCapability(capability).catch(this.error);
+    }
 
-    // shown in the Cloud section of the app settings page
-    if (!this.cloudStatus) this.cloudStatus = { lastSuccessAt: null, lastError: null };
+    this.setUpCloud();
 
     // Set device unavailable until first successful poll
     this.setUnavailable().catch(this.error);
@@ -61,13 +52,9 @@ class GlowmarktUKSmartMeter_device extends Device {
     });
     this.lastPowerAt = null;
     this.exporting = new ExportingTracker(this.getStoreValue('exporting') || {});
-    this.health = new AccountHealth(this.getStoreValue('accountHealth') || {});
     this.importToday = new ImportToday(this.getStoreValue('importToday') || {});
     // the last day New day's figures was fired for; undefined until the first readings poll
     this.announcedDay = this.getStoreValue('announcedDay');
-    this.readings = null;
-    this.readingsPromise = null;
-    this.tariffResult = null;
 
     const settings = this.getSettings();
     if (settings.pollFrequency) {
@@ -81,19 +68,6 @@ class GlowmarktUKSmartMeter_device extends Device {
     this.startPolling();
   }
 
-  async ensureCapability(capability) {
-    if (this.hasCapability(capability)) return;
-    await this.addCapability(capability);
-    if (CAPABILITY_TITLES[capability]) {
-      await this.setCapabilityOptions(capability, { title: { en: CAPABILITY_TITLES[capability] } }).catch(this.error);
-    }
-  }
-
-  async setIfChanged(capability, value) {
-    if (!this.hasCapability(capability) || this.getCapabilityValue(capability) === value) return;
-    await this.setCapabilityValue(capability, value).catch(this.error);
-  }
-
   /**
    * Starts every poll, stopping any that are running first. The first polls
    * aren't awaited: awaiting setAvailable() inside onInit breaks the Homey
@@ -101,39 +75,14 @@ class GlowmarktUKSmartMeter_device extends Device {
    */
   startPolling() {
     this.stopTimers();
-    // stopTimers() moves this on, so a fetch still running from before a
-    // restart doesn't schedule a second chain of tariff fetches
-    const generation = this.pollGeneration;
-
     this.updateDevice();
     this.updateReadings();
-    this.updateTariff().then(() => this.scheduleTariff(generation));
+    this.startTariff();
 
     this.log(`Initiating power polling with frequency ${this.pollFrequency}`);
-    this.poll = this.homey.setInterval(() => this.updateDevice(), this.pollFrequency);
-    this.readingsPoll = this.homey.setInterval(() => this.updateReadings(), READINGS_EVERY_MS);
-    this.minuteTimer = this.homey.setInterval(() => this.everyMinute().catch(this.error), MINUTE_MS);
-  }
-
-  /** Fetches the tariff 30 s after each hour and half hour. */
-  scheduleTariff(generation) {
-    if (generation !== this.pollGeneration) return;
-    const delay = nextTariffAt(Date.now()) - Date.now();
-    this.tariffTimer = this.homey.setTimeout(() => {
-      this.updateTariff().then(() => this.scheduleTariff(generation));
-    }, delay);
-  }
-
-  stopTimers() {
-    if (this.poll) this.homey.clearInterval(this.poll);
-    if (this.readingsPoll) this.homey.clearInterval(this.readingsPoll);
-    if (this.minuteTimer) this.homey.clearInterval(this.minuteTimer);
-    if (this.tariffTimer) this.homey.clearTimeout(this.tariffTimer);
-    this.poll = null;
-    this.readingsPoll = null;
-    this.minuteTimer = null;
-    this.tariffTimer = null;
-    this.pollGeneration = (this.pollGeneration || 0) + 1;
+    this.every(() => this.updateDevice(), this.pollFrequency);
+    this.every(() => this.updateReadings(), READINGS_EVERY_MS);
+    this.every(() => this.everyMinute().catch(this.error), MINUTE_MS);
   }
 
   /**
@@ -204,56 +153,23 @@ class GlowmarktUKSmartMeter_device extends Device {
     await this.saveState();
   }
 
-  async accountEvent(event) {
-    if (!event) return;
-    this.log(`Account needs attention: ${event.reason}`);
-    const reason = this.homey.__(`cloud.attention.${event.reason}`);
-    await this.driver.cards.accountAttention.trigger(this, { reason }).catch(this.error);
-  }
-
   async saveState() {
-    await this.setStoreValue('staleness', this.staleness.toJSON()).catch(this.error);
-    await this.setStoreValue('exporting', this.exporting.toJSON()).catch(this.error);
-    await this.setStoreValue('accountHealth', this.health.toJSON()).catch(this.error);
-    await this.setStoreValue('importToday', this.importToday.toJSON()).catch(this.error);
+    await super.saveState();
+    if (this.staleness) await this.setStoreValue('staleness', this.staleness.toJSON()).catch(this.error);
+    if (this.exporting) await this.setStoreValue('exporting', this.exporting.toJSON()).catch(this.error);
+    if (this.importToday) await this.setStoreValue('importToday', this.importToday.toJSON()).catch(this.error);
   }
 
-  /**
-   * The readings layer for this device's entry, created once its resources
-   * are listed. Gas capabilities are added if the entry has gas, and a stored
-   * live resource that isn't electricity.consumption is replaced.
-   */
-  loadReadings() {
-    if (!this.readingsPromise) {
-      this.readingsPromise = this.createReadings().catch((error) => {
-        this.readingsPromise = null;
-        throw error;
-      });
-    }
-    return this.readingsPromise;
-  }
-
-  async createReadings() {
-    const body = await this.request(`/virtualentity/${this.getData().id}/resources`);
-    const resources = Array.isArray(body && body.resources) ? body.resources : [];
+  /** A stored live resource that isn't electricity.consumption is replaced. */
+  async onResources(resources) {
     const live = liveElectricityResource(resources, this.getStoreValue('elec_cons_res'));
     if (live && live !== this.getStoreValue('elec_cons_res')) {
       this.log('Stored resource is not electricity consumption; switching to the one that is');
       await this.setStoreValue('elec_cons_res', live);
     }
-    const readings = new CloudReadings({
-      request: (path, options) => this.request(path, options),
-      resources,
-      state: this.getStoreValue('cloudReadings') || {},
-    });
-    if (readings.hasGas()) {
-      for (const capability of GAS_CAPABILITIES) await this.ensureCapability(capability);
-    }
-    this.readings = readings;
-    return readings;
   }
 
-  /** Daily figures and "data up to", every 15 minutes. */
+  /** Yesterday's figures and "data up to", every 15 minutes. */
   async updateReadings() {
     if (this.isAccessRefused()) return;
     try {
@@ -266,14 +182,9 @@ class GlowmarktUKSmartMeter_device extends Device {
       const yesterday = figures.electricityYesterday && figures.electricityYesterday.final ? figures.electricityYesterday : null;
       await this.setIfChanged('electricity_yesterday', yesterday ? yesterday.kWh : null);
       await this.setIfChanged('electricity_cost_yesterday', yesterday ? yesterday.pounds : null);
-      if (figures.gasLatestDay) {
-        await this.setIfChanged('gas_day', dayLabel(figures.gasLatestDay.date));
-        await this.setIfChanged('gas_day_energy', figures.gasLatestDay.kWh);
-        await this.setIfChanged('gas_day_cost', figures.gasLatestDay.pounds);
-      }
 
-      await this.announceNewDay(figures, readings.hasGas(), now);
-      await this.setStoreValue('cloudReadings', readings.toJSON()).catch(this.error);
+      await this.announceNewDay(figures, now);
+      await this.saveReadings();
     } catch (error) {
       this.error('updateReadings failed:', error.message);
       this.recordError('readings', error);
@@ -284,8 +195,8 @@ class GlowmarktUKSmartMeter_device extends Device {
    * Fires New day's figures once per day. Not on the first poll after
    * installing: a day that's already final then is recorded, not announced.
    */
-  async announceNewDay(figures, hasGas, now) {
-    const day = dayToAnnounce(figures, { now, hasGas, announced: this.announcedDay ?? null });
+  async announceNewDay(figures, now) {
+    const day = electricityDayToAnnounce(figures, this.announcedDay ?? null);
     if (this.announcedDay === undefined || this.announcedDay === null) {
       this.announcedDay = day ? day.date : addDays(londonDate(now), -2);
       await this.setStoreValue('announcedDay', this.announcedDay).catch(this.error);
@@ -295,15 +206,15 @@ class GlowmarktUKSmartMeter_device extends Device {
     this.announcedDay = day.date;
     await this.setStoreValue('announcedDay', day.date).catch(this.error);
     this.log(`New day's figures for ${day.date}`);
-    await this.driver.cards.newDay.trigger(this, day.tokens).catch(this.error);
+    await this.driver.cards.newDay.trigger(this, {
+      date: dayLabel(day.date), electricity_kwh: day.kWh, electricity_cost: day.pounds ?? 0,
+    }).catch(this.error);
   }
 
   /**
-   * The electricity and gas tariffs, every half hour. Tariff changed fires on
-   * any change to the electricity rate. Where the gas tariff has never
-   * answered, the gas standing charge comes from the device setting.
-   * The tariff doesn't control device availability: a missing or failed
-   * tariff shouldn't mark the device unavailable if power is working.
+   * The electricity tariff, every half hour. Tariff changed fires on any change
+   * to the rate. The tariff doesn't control device availability: a missing or
+   * failed tariff shouldn't mark the device unavailable if power is working.
    */
   async updateTariff() {
     if (this.isAccessRefused()) return;
@@ -312,7 +223,7 @@ class GlowmarktUKSmartMeter_device extends Device {
       const now = Date.now();
       const answers = await readings.fetchTariffs(now);
       this.tariffResult = { at: now, ...answers };
-      await this.setStoreValue('cloudReadings', readings.toJSON()).catch(this.error);
+      await this.saveReadings();
 
       const electricity = readings.tariffs.electricity && readings.tariffs.electricity.last;
       if (electricity) {
@@ -326,8 +237,6 @@ class GlowmarktUKSmartMeter_device extends Device {
         }
         if (electricity.standingCharge !== null) await this.setIfChanged('standing_charge', electricity.standingCharge);
       }
-      await this.updateGasTariff();
-
       if (!answers.electricity) throw apiError('No copy of the electricity resource answered /tariff');
     } catch (error) {
       this.error('updateTariff failed:', error.message);
@@ -335,137 +244,8 @@ class GlowmarktUKSmartMeter_device extends Device {
     }
   }
 
-  async updateGasTariff(setting = this.getSetting('gas_standing_charge')) {
-    const { readings } = this;
-    if (!readings || !readings.hasGas()) return;
-    const gas = readings.tariffs.gas && readings.tariffs.gas.last;
-    if (gas) {
-      if (gas.rate !== null) await this.setIfChanged('tariff.gas', gas.rate);
-      if (gas.standingCharge !== null) await this.setIfChanged('standing_charge.gas', gas.standingCharge);
-      return;
-    }
-    const fallback = Number(setting);
-    await this.setIfChanged('standing_charge.gas', fallback > 0 ? fallback : null);
-  }
-
-  /**
-   * GETs an API path and returns the response body. Renews the token when it's
-   * close to expiry, and logs in again once on a 401 or error response. If it's
-   * still a 401 after a fresh login, marks the device unavailable and stops
-   * trying for an hour. Errors for HTTP failures carry the `status`; `options`
-   * go to apiGet, as { timeoutMs }.
-   */
-  async request(path, options) {
-    let token = await this.currentToken();
-    let res = await apiGet(path, token, options);
-    if (res.authFailed) {
-      this.log(`${path.split('?')[0]} returned HTTP ${res.status}, logging in again`);
-      token = await this.refreshToken();
-      if (!token) throw apiError('Token refresh failed');
-      res = await apiGet(path, token, options);
-      if (res.status === 401) {
-        this.refuseAccess(res);
-        const error = apiError('HTTP 401 after a fresh login', JSON.stringify(res.body));
-        error.accessRefused = true;
-        error.status = 401;
-        throw error;
-      }
-    }
-    if (!res.ok) {
-      const error = apiError(`HTTP ${res.status} from /${path.split('?')[0].split('/').pop()}`, JSON.stringify(res.body));
-      error.status = res.status;
-      throw error;
-    }
-    if (this.health) this.health.succeeded();
-    return res.body;
-  }
-
-  /**
-   * Returns the stored token, renewing it first if it expires within a day.
-   */
-  async currentToken() {
-    const token = this.getStoreValue('token');
-    const expiry = tokenExpiry(token);
-    if (expiry !== null && expiry - Date.now() < TOKEN_RENEW_BEFORE_MS) {
-      this.log('Token expires within a day, renewing');
-      return (await this.refreshToken()) || token;
-    }
-    return token;
-  }
-
-  /**
-   * Refreshes the API token using stored credentials. Returns the new token or null on failure.
-   * Concurrent calls share one login through the driver, across every device on the account.
-   */
-  async refreshToken() {
-    const settings = this.getSettings();
-    const token = await this.driver.login(settings.username, settings.password);
-    if (!token) {
-      this.error('Token refresh failed');
-      if (this.health) await this.accountEvent(this.health.loginFailed(Date.now()));
-      return null;
-    }
-    if (this.health) this.health.loginSucceeded();
-    await this.setStoreValue('token', token);
-    this.log('Token refreshed successfully');
-    return token;
-  }
-
-  recordError(poll, error) {
-    this.cloudStatus.lastError = { at: Date.now(), poll, message: summarise(error) };
-  }
-
-  /**
-   * Status for the Cloud section of the app settings page, with the postcode
-   * masked in the device name. Resource copies are described by name and
-   * classifier, never by ID.
-   */
-  getCloudStatus() {
-    const expiry = tokenExpiry(this.getStoreValue('token'));
-    const status = this.cloudStatus || {};
-    return {
-      name: maskPostcodes(this.getName()),
-      available: this.getAvailable(),
-      lastSuccessAt: status.lastSuccessAt || null,
-      lastError: status.lastError || null,
-      accessRefusedUntil: this.isAccessRefused() ? this.accessRefusedUntil : null,
-      tokenRenewsAt: expiry === null ? null : expiry - TOKEN_RENEW_BEFORE_MS,
-      readings: this.readingsStatus(),
-      tariff: this.tariffResult && {
-        at: this.tariffResult.at,
-        electricity: this.tariffResult.electricity || null,
-        gas: this.tariffResult.gas === undefined ? undefined : this.tariffResult.gas || null,
-      },
-    };
-  }
-
-  /** [{ classifier, copy, dataUpTo }] for the copies in use, or [] before the first readings poll. */
-  readingsStatus() {
-    const { readings } = this;
-    if (!readings || !readings.selected) return [];
-    return Object.entries(readings.selected).map(([classifier, { resourceId, lastTime }]) => {
-      const resource = readings.resources.find((r) => r.resourceId === resourceId);
-      return { classifier, copy: resource ? maskPostcodes(resource.name) : null, dataUpTo: lastTime };
-    });
-  }
-
-  isAccessRefused() {
-    return Boolean(this.accessRefusedUntil && Date.now() < this.accessRefusedUntil);
-  }
-
-  refuseAccess(res) {
-    this.accessRefusedUntil = Date.now() + ACCESS_REFUSED_RETRY_MS;
-    this.error(`Access refused after a fresh login (HTTP ${res.status}); retrying in an hour`);
-    this.setUnavailable(this.homey.__('cloud.accessRefused')).catch(this.error);
-    if (this.health) this.accountEvent(this.health.refused()).catch(this.error);
-  }
-
   isReporting() {
     return !this.staleness.stale;
-  }
-
-  isAccountOk() {
-    return this.health.isOk();
   }
 
   isExporting() {
@@ -491,12 +271,7 @@ class GlowmarktUKSmartMeter_device extends Device {
     this.log('Display and CAD (API) settings changed');
 
     // if username or password changed, get new token from API and write it to token in device store
-    if (changedKeys.includes('username') || changedKeys.includes('password')) {
-      this.log('Credentials changed - getting new token from API');
-      const token = await this.driver.login(newSettings.username, newSettings.password);
-      await this.setStoreValue('token', token || 'VOID');
-      this.accessRefusedUntil = null;
-    }
+    if (changedKeys.includes('username') || changedKeys.includes('password')) await this.applyCredentials(newSettings);
 
     // if poll frequency changed, update variable
     if (changedKeys.includes('pollFrequency')) {
@@ -507,10 +282,6 @@ class GlowmarktUKSmartMeter_device extends Device {
       this.staleness.setStaleAfter(newSettings.stale_after);
       // Apply the new limit straight away rather than at the next minute.
       this.homey.setTimeout(() => this.everyMinute().catch(this.error), 0);
-    }
-
-    if (changedKeys.includes('gas_standing_charge')) {
-      await this.updateGasTariff(newSettings.gas_standing_charge);
     }
 
     // restart polling only for the settings it depends on, so it starts afresh
@@ -534,15 +305,7 @@ class GlowmarktUKSmartMeter_device extends Device {
    */
   async onDeleted() {
     this.log('Display and CAD (API) has been deleted');
-    this.stopTimers();
-  }
-
-  /**
-   * onUninit is called when the app stops or restarts, or the device is updated.
-   */
-  async onUninit() {
-    this.stopTimers();
-    await this.saveState();
+    await super.onDeleted();
   }
 }
 

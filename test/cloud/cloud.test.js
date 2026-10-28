@@ -29,6 +29,8 @@ require.cache[require.resolve('node-fetch')] = {
 require('../helpers/homey-stub');
 const Driver = require('../../drivers/smart-meter/driver');
 const Device = require('../../drivers/smart-meter/device');
+const GasDriver = require('../../drivers/glow_cloud_gas/driver');
+const GasDevice = require('../../drivers/glow_cloud_gas/device');
 const { summarise, apiError } = require('../../lib/cloud/glowmarkt');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -69,8 +71,8 @@ function resetApi(extra = {}) {
 const triggered = [];
 const conditions = {};
 
-function makeDriver(devices = []) {
-  const driver = new Driver();
+function makeDriver(devices = [], DriverClass = Driver) {
+  const driver = new DriverClass();
   driver.homey = {
     flow: {
       getDeviceTriggerCard: (id) => ({ trigger: async (device, tokens) => { triggered.push({ id, tokens }); } }),
@@ -84,8 +86,10 @@ function makeDriver(devices = []) {
   return driver;
 }
 
-function makeDevice(driver, { token = FRESH_TOKEN, name = 'Smart Meter for YO10 3DD', username = USERNAME } = {}) {
-  const device = new Device();
+function makeDevice(driver, {
+  token = FRESH_TOKEN, name = 'Smart Meter for YO10 3DD', username = USERNAME, DeviceClass = Device,
+} = {}) {
+  const device = new DeviceClass();
   const store = { token, elec_cons_res: 'res-good-0001' };
   Object.assign(device, {
     driver,
@@ -254,12 +258,12 @@ test.afterEach(() => { Date.now = realNow; });
  * With `api`, its requests go to that fake API instead of node-fetch.
  */
 function startDevice({
-  pollFrequency, settings: extraSettings = {}, store: storeValues = {}, api, capabilities = {},
+  pollFrequency, settings: extraSettings = {}, store: storeValues = {}, api, capabilities = {}, gas = false,
 } = {}) {
   resetApi();
   triggered.length = 0;
-  const driver = makeDriver();
-  const { device, store } = makeDevice(driver);
+  const driver = makeDriver([], gas ? GasDriver : Driver);
+  const { device, store } = makeDevice(driver, { DeviceClass: gas ? GasDevice : Device });
   Object.assign(store, storeValues);
   const active = new Map();
   const timeouts = new Map();
@@ -273,15 +277,18 @@ function startDevice({
   const settings = {
     username: USERNAME, password: 'pw', pollFrequency, ...extraSettings,
   };
-  const caps = new Map(Object.entries({
-    measure_power: null, 'meter_power.imported': null, tariff: null, ...capabilities,
-  }));
+  // what pairing gives each driver's devices
+  const paired = gas
+    ? ['gas_day', 'gas_day_energy', 'gas_day_cost', 'tariff', 'standing_charge', 'data_up_to']
+    : ['measure_power', 'meter_power.imported', 'tariff'];
+  const caps = new Map([...paired.map((c) => [c, null]), ...Object.entries(capabilities)]);
   Object.assign(device, {
     getSettings: () => settings,
     getSetting: (key) => settings[key],
     getData: () => ({ id: ENTRIES[0].veId }),
     hasCapability: (capability) => caps.has(capability),
     addCapability: async (capability) => { caps.set(capability, null); },
+    removeCapability: async (capability) => { caps.delete(capability); },
     setCapabilityOptions: async () => {},
     getCapabilityValue: (capability) => caps.get(capability) ?? null,
     setCapabilityValue: async (capability, value) => { caps.set(capability, value); },
@@ -353,30 +360,32 @@ test('the next tariff fetch is 30 s after the next half hour', async () => {
   assert.deepEqual([...timeouts.values()].map(({ ms }) => ms), [Date.parse('2026-10-28T14:00:30Z') - RECORDED_AT]);
 });
 
-test('an existing device gains the new capabilities, and the gas ones once its entry shows gas', async () => {
-  const { device, caps, store } = startDevice({ api: fakeCloudApi(), store: { elec_cons_res: ID['gas.consumption|gas consumption'] } });
+test('an existing device gains the new capabilities, and a test install loses the gas ones', async () => {
+  const { device, caps, store } = startDevice({
+    api: fakeCloudApi(),
+    store: { elec_cons_res: ID['gas.consumption|gas consumption'] },
+    capabilities: { gas_day: 'Tue 27 Oct', 'tariff.gas': 7.92 },
+  });
   await device.onInit();
   for (const capability of ['standing_charge', 'electricity_today', 'electricity_yesterday', 'electricity_cost_yesterday', 'data_up_to']) {
     assert.ok(caps.has(capability), capability);
   }
+  assert.ok(!caps.has('gas_day') && !caps.has('tariff.gas'));
   await settle();
-  for (const capability of ['gas_day', 'gas_day_energy', 'gas_day_cost', 'tariff.gas', 'standing_charge.gas']) {
-    assert.ok(caps.has(capability), capability);
-  }
   // A device paired by name onto the gas resource moves to electricity consumption.
   assert.equal(store.elec_cons_res, ID['electricity.consumption|electricity consumption']);
 });
 
-test('yesterday, the latest gas day and data up to come from the readings poll', async () => {
-  const { device, caps } = startDevice({ api: fakeCloudApi() });
+test('yesterday and data up to come from the readings poll, which reads no gas', async () => {
+  const api = fakeCloudApi();
+  const { device, caps } = startDevice({ api });
   await device.onInit();
   await settle();
   assert.equal(caps.get('electricity_yesterday'), 11.196);
   assert.equal(caps.get('electricity_cost_yesterday'), 2.87);
-  assert.equal(caps.get('gas_day'), 'Tue 27 Oct');
-  assert.equal(caps.get('gas_day_energy'), 0);
-  assert.equal(caps.get('gas_day_cost'), 0);
   assert.equal(caps.get('data_up_to'), 'Wed 28 Oct 13:18');
+  const gasIds = [ID['gas.consumption|gas consumption'], ID['gas.consumption|Smart Meter, gas consumption']];
+  assert.ok(!api.calls.some((c) => gasIds.some((id) => c.path.includes(id))), 'the electricity device read gas');
 });
 
 test('rates and standing charges come from /tariff, and Tariff changed fires when the rate changes', async () => {
@@ -385,28 +394,7 @@ test('rates and standing charges come from /tariff, and Tariff changed fires whe
   await settle();
   assert.equal(caps.get('tariff'), 25.63);
   assert.equal(caps.get('standing_charge'), 60.7);
-  assert.equal(caps.get('tariff.gas'), 7.92);
-  assert.equal(caps.get('standing_charge.gas'), 28.84);
   assert.deepEqual(triggered.filter((t) => t.id === 'tariff_changed').map((t) => t.tokens), [{ tariff: 25.63 }]);
-});
-
-test('without a gas tariff ever, the gas standing charge comes from the setting', async () => {
-  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
-  const api = fakeCloudApi({
-    overrides: {
-      [`tariff ${ID['gas.consumption|gas consumption']}`]: timeout,
-      [`tariff ${ID['gas.consumption|Smart Meter, gas consumption']}`]: timeout,
-    },
-  });
-  const { device, caps } = startDevice({ api, settings: { gas_standing_charge: 30.5 } });
-  await device.onInit();
-  await settle();
-  assert.equal(caps.get('standing_charge.gas'), 30.5);
-  assert.equal(caps.get('tariff.gas'), null);
-  assert.equal(caps.get('standing_charge'), 60.7);
-
-  await device.onSettings({ oldSettings: {}, newSettings: { gas_standing_charge: 0 }, changedKeys: ['gas_standing_charge'] });
-  assert.equal(caps.get('standing_charge.gas'), null);
 });
 
 test("New day's figures doesn't fire on the first poll after install", async () => {
@@ -423,7 +411,7 @@ test("New day's figures fires once for a final day", async () => {
   await settle();
   await device.updateReadings();
   assert.deepEqual(triggered.filter((t) => t.id === 'cloud_new_day_figures').map((t) => t.tokens), [{
-    date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 2.87, gas_kwh: 0, gas_cost: 0,
+    date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 2.87,
   }]);
 });
 
@@ -524,8 +512,99 @@ test('cloud status shows the copies in use and the last tariff, without IDs', as
   assert.deepEqual(status.readings.find((r) => r.classifier === 'electricity.consumption'), {
     classifier: 'electricity.consumption', copy: 'electricity consumption', dataUpTo: Date.parse('2026-10-28T13:18:00Z'),
   });
-  assert.deepEqual(status.tariff, {
-    at: RECORDED_AT, electricity: { rate: 25.63, standingCharge: 60.7 }, gas: { rate: 7.92, standingCharge: 28.84 },
-  });
+  assert.equal(status.kind, 'electricity');
+  assert.deepEqual(status.tariff, { at: RECORDED_AT, electricity: { rate: 25.63, standingCharge: 60.7 } });
   assert.ok(!JSON.stringify(status).includes('00000000-'), 'status contains a resource ID');
+});
+
+// The cloud gas device
+
+const GAS = ID['gas.consumption|gas consumption'];
+const GAS_SMART = ID['gas.consumption|Smart Meter, gas consumption'];
+
+test('pairing a gas device lists entries with gas Glowmarkt has data for', async () => {
+  resetApi({
+    'GET /virtualentity': { body: [{ veId: 've-good-0001', name: 'DCC Sourced', postalCode: 'YO10 3DD' }, { veId: 've-stale-0002', name: 'DCC Sourced', postalCode: 'YO10 3DD' }] },
+    'GET /virtualentity/ve-stale-0002/resources': { body: { resources: [{ resourceId: 'res-gas-0002', classifier: 'gas.consumption', name: 'gas consumption' }] } },
+    'GET /resource/res-gas-0001/last-time': { body: { data: { lastTs: 1793143800 } } },
+    'GET /resource/res-gas-0002/last-time': { status: 401, body: { error: 'Unauthorized' } },
+  });
+  const driver = makeDriver([], GasDriver);
+  await driver.onInit();
+  const devices = await pair(driver);
+  assert.deepEqual(devices.map((d) => [d.name, d.data.id]), [['DCC Sourced gas for YO10 3DD', 've-good-0001']]);
+  assert.deepEqual(driver.getCloudStatus()[0].skipped.map((s) => [s.kind, s.reason]), [['gas', { code: 'read_failed', status: 401 }]]);
+});
+
+test('the gas device shows the latest complete day, its cost, the tariff and data up to, reading no electricity', async () => {
+  const api = fakeCloudApi();
+  const { device, caps } = startDevice({ api, gas: true });
+  await device.onInit();
+  await settle();
+  assert.equal(caps.get('gas_day'), 'Tue 27 Oct');
+  assert.equal(caps.get('gas_day_energy'), 0);
+  assert.equal(caps.get('gas_day_cost'), 0);
+  assert.equal(caps.get('data_up_to'), 'Tue 27 Oct 23:30');
+  assert.equal(caps.get('tariff'), 7.92);
+  assert.equal(caps.get('standing_charge'), 28.84);
+  assert.ok(!api.calls.some((c) => c.path.includes(ID['electricity.consumption|electricity consumption'])), 'the gas device read electricity');
+  assert.deepEqual(device.getCloudStatus().tariff, { at: RECORDED_AT, gas: { rate: 7.92, standingCharge: 28.84 } });
+});
+
+test('without a gas tariff ever, the standing charge comes from the setting', async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  const api = fakeCloudApi({ overrides: { [`tariff ${GAS}`]: timeout, [`tariff ${GAS_SMART}`]: timeout } });
+  const { device, caps } = startDevice({ api, gas: true, settings: { gas_standing_charge: 30.5 } });
+  await device.onInit();
+  await settle();
+  assert.equal(caps.get('standing_charge'), 30.5);
+  assert.equal(caps.get('tariff'), null);
+
+  await device.onSettings({ oldSettings: {}, newSettings: { gas_standing_charge: 0 }, changedKeys: ['gas_standing_charge'] });
+  assert.equal(caps.get('standing_charge'), null);
+});
+
+test("gas New day's figures: not on the first poll, then once per day, oldest first after a gap", async () => {
+  const first = startDevice({ api: fakeCloudApi(), gas: true });
+  await first.device.onInit();
+  await settle();
+  assert.equal(first.store.announcedDay, '2026-10-27');
+  assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 0);
+
+  const gap = startDevice({ api: fakeCloudApi(), gas: true, store: { announcedDay: '2026-10-23' } });
+  await gap.device.onInit();
+  await settle();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').map((t) => t.tokens.date), ['Sat 24 Oct', 'Sun 25 Oct', 'Mon 26 Oct', 'Tue 27 Oct']);
+  assert.deepEqual(triggered.find((t) => t.tokens.date === 'Sat 24 Oct').tokens, { date: 'Sat 24 Oct', gas_kwh: 28.081, gas_cost: 2.22 });
+  assert.equal(gap.store.announcedDay, '2026-10-27');
+
+  await gap.device.updateReadings();
+  assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 4);
+});
+
+test('gas Data is late fires once when data up to passes 3 days, and the condition follows it', async () => {
+  const { device } = startDevice({ api: fakeCloudApi(), gas: true });
+  await device.onInit();
+  await settle();
+  assert.equal(conditions.cloud_gas_up_to_date({ device }), true);
+
+  now = Date.parse('2026-10-31T00:00:00Z');
+  await device.updateReadings();
+  await device.updateReadings();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_data_late').map((t) => t.tokens), [{ days: 3 }]);
+  assert.equal(conditions.cloud_gas_up_to_date({ device }), false);
+});
+
+test('cloud status puts electricity and gas devices on the same account together', async () => {
+  const electricity = startDevice({ api: fakeCloudApi() });
+  const gas = startDevice({ api: fakeCloudApi(), gas: true });
+  await electricity.device.onInit();
+  await gas.device.onInit();
+  await settle();
+  electricity.device.driver.getDevices = () => [electricity.device];
+  gas.device.driver.getDevices = () => [gas.device];
+  const CloudDriver = require('../../lib/cloud/CloudDriver');
+  const accounts = CloudDriver.accountsStatus([electricity.device.driver, gas.device.driver]);
+  assert.equal(accounts.length, 1);
+  assert.deepEqual(accounts[0].devices.map((d) => d.kind), ['electricity', 'gas']);
 });

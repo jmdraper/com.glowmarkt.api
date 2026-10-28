@@ -93,9 +93,10 @@
     "skipReason": {
       "resources_failed": "its resources couldn't be listed (HTTP __status__)",
       "no_resources": "it has no resources",
-      "read_failed": "its electricity reading failed (HTTP __status__)",
+      "read_failed": "its reading failed (HTTP __status__)",
       "error": "__message__",
-      "no_electricity": "it has no electricity consumption resource"
+      "no_electricity": "it has no electricity consumption resource",
+      "no_gas": "it has no gas consumption resource"
     },
     "debugTitle": "Debug log",
     "debugHint": "The last 50 messages, newest first. MPAN, MPRN, EUI and supplier are masked to their last four characters.",
@@ -112,6 +113,10 @@
       "port_in_use": "Port __port__ is already in use by another app; choose another port.",
       "no_host": "Set the external broker's host.",
       "start_failed": "The MQTT layer couldn't start: __message__"
+    },
+    "kind": {
+      "electricity": "Electricity meter (cloud)",
+      "gas": "Gas meter (cloud)"
     }
   },
   "cloud": {

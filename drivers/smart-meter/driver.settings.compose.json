@@ -52,22 +52,5 @@
     "hint": {
       "en": "Meter stopped reporting fires when Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than this."
     }
-  },
-  {
-    "id": "gas_standing_charge",
-    "type": "number",
-    "label": {
-      "en": "Gas standing charge"
-    },
-    "value": 0,
-    "min": 0,
-    "max": 1000,
-    "step": 0.01,
-    "units": {
-      "en": "p/day"
-    },
-    "hint": {
-      "en": "Only for meters with gas. Used only if Glowmarkt has never given a gas tariff for this meter; leave at 0 if you don't want it shown."
-    }
   }
 ]

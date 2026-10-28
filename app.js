@@ -3,6 +3,7 @@
 const Homey = require('homey');
 
 const LayerSupervisor = require('./lib/mqtt/LayerSupervisor');
+const CloudDriver = require('./lib/cloud/CloudDriver');
 
 const LOCAL_DRIVER_IDS = ['glow_local_gas', 'glow_local_electricity'];
 const SETTINGS_KEY = 'mqtt';
@@ -241,12 +242,12 @@ class GlowmarktApp extends Homey.App {
   }
 
   getCloudStatus() {
-    const driver = this.homey.drivers.getDrivers()['smart-meter'];
-    if (!driver) return [];
+    const drivers = this.homey.drivers.getDrivers();
+    const cloud = ['smart-meter', 'glow_cloud_gas'].map((id) => drivers[id]).filter(Boolean);
     try {
-      return driver.getCloudStatus();
+      return CloudDriver.accountsStatus(cloud);
     } catch (error) {
-      // The driver isn't ready yet.
+      // A driver isn't ready yet.
       return [];
     }
   }

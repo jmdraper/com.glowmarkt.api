@@ -158,18 +158,21 @@ test('a pairing session starts the layer; closing it leaves it running for the i
   await app.onUninit();
 });
 
-test('status includes the cloud driver status, or an empty list without it', async () => {
+test('status includes the cloud drivers status, or an empty list without them', async () => {
   const port = await freePort();
   let app = await makeApp({ mqtt: { port } });
   assert.deepEqual((await app.getMqttStatus()).cloud, []);
   await app.onUninit();
 
-  const accounts = [{ number: 1, devices: [], skipped: [], tokenRenewsAt: null }];
-  app = await makeApp({ mqtt: { port } }, [], { getCloudStatus: () => accounts });
-  assert.deepEqual((await app.getMqttStatus()).cloud, accounts);
+  const status = { name: 'Home', tokenRenewsAt: null };
+  const device = { getSetting: () => 'someone@example.com', getCloudStatus: () => status };
+  app = await makeApp({ mqtt: { port } }, [], { getDevices: () => [device], pairingSkips: new Map() });
+  assert.deepEqual((await app.getMqttStatus()).cloud, [{
+    number: 1, devices: [status], skipped: [], tokenRenewsAt: null,
+  }]);
   await app.onUninit();
 
-  app = await makeApp({ mqtt: { port } }, [], { getCloudStatus: () => { throw new Error('not ready'); } });
+  app = await makeApp({ mqtt: { port } }, [], { getDevices: () => { throw new Error('not ready'); } });
   assert.deepEqual((await app.getMqttStatus()).cloud, []);
   await app.onUninit();
 });

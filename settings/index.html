@@ -378,7 +378,8 @@
           const list = el('ul', null, 'glow-skipped');
           for (const entry of account.skipped) {
             const reason = t(`settings.skipReason.${entry.reason.code}`, { status: entry.reason.status, message: entry.reason.message });
-            list.appendChild(el('li', `${entry.name}: ${reason} (${formatTime(entry.at)})`));
+            const kind = entry.kind ? ` (${t(`settings.kind.${entry.kind}`)})` : '';
+            list.appendChild(el('li', `${entry.name}${kind}: ${reason} (${formatTime(entry.at)})`));
           }
           box.appendChild(list);
         }
@@ -407,10 +408,9 @@
         const describe = (key, rates) => (rates
           ? t('settings.tariffRates', { commodity: t(`settings.${key}`), rate: rates.rate ?? '—', standing: rates.standingCharge ?? '—' })
           : t('settings.tariffNoAnswer', { commodity: t(`settings.${key}`) }));
-        const parts = [describe('electricity', device.tariff.electricity)];
-        if (device.tariff.gas !== undefined) parts.push(describe('gas', device.tariff.gas));
+        const kind = device.kind || 'electricity';
         const dl = el('dl');
-        addPair(dl, t('settings.tariffAt', { time: formatTime(device.tariff.at) }), parts.join('; '));
+        addPair(dl, t('settings.tariffAt', { time: formatTime(device.tariff.at) }), describe(kind, device.tariff[kind]));
         box.appendChild(dl);
       }
     }

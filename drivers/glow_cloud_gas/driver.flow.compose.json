@@ -1,0 +1,97 @@
+{
+  "triggers": [
+    {
+      "id": "cloud_gas_new_day_figures",
+      "title": {
+        "en": "New day's figures"
+      },
+      "hint": {
+        "en": "Fires once for each day of gas, when Glowmarkt receives it, usually a day or more later. If several days arrive at once, it fires once for each, oldest first. The cost is for energy only, without the standing charge."
+      },
+      "tokens": [
+        {
+          "name": "date",
+          "type": "string",
+          "title": {
+            "en": "Date"
+          },
+          "example": "Tue 27 Oct"
+        },
+        {
+          "name": "gas_kwh",
+          "type": "number",
+          "title": {
+            "en": "Gas (kWh)"
+          },
+          "example": 28.081
+        },
+        {
+          "name": "gas_cost",
+          "type": "number",
+          "title": {
+            "en": "Gas cost (£)"
+          },
+          "example": 2.22
+        }
+      ]
+    },
+    {
+      "id": "cloud_gas_data_late",
+      "title": {
+        "en": "Data is late"
+      },
+      "hint": {
+        "en": "Glowmarkt's gas data is more than 3 days old. Fires once, then again only after the data has caught up."
+      },
+      "tokens": [
+        {
+          "name": "days",
+          "type": "number",
+          "title": {
+            "en": "Days behind"
+          },
+          "example": 4
+        }
+      ]
+    },
+    {
+      "id": "cloud_gas_account_attention",
+      "title": {
+        "en": "Account needs attention"
+      },
+      "hint": {
+        "en": "Fires once when logging in to Glowmarkt has failed for 30 minutes, or Glowmarkt refuses this meter even after logging in again. It fires again only after the account has worked in between."
+      },
+      "tokens": [
+        {
+          "name": "reason",
+          "type": "string",
+          "title": {
+            "en": "Reason"
+          },
+          "example": "login failing"
+        }
+      ]
+    }
+  ],
+  "conditions": [
+    {
+      "id": "cloud_gas_up_to_date",
+      "title": {
+        "en": "Data !{{is|isn't}} up to date"
+      },
+      "hint": {
+        "en": "Up to date while Glowmarkt's gas data is no more than 3 days old."
+      }
+    },
+    {
+      "id": "cloud_gas_account_ok",
+      "title": {
+        "en": "Account !{{is|isn't}} OK"
+      },
+      "hint": {
+        "en": "Not OK from when Account needs attention fires until the account works again."
+      }
+    }
+  ]
+}

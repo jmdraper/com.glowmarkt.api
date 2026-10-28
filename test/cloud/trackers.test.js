@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const ExportingTracker = require('../../lib/ExportingTracker');
 const AccountHealth = require('../../lib/cloud/AccountHealth');
-const { dayToAnnounce } = require('../../lib/cloud/newDay');
+const { electricityDayToAnnounce, gasDaysToAnnounce } = require('../../lib/cloud/newDay');
 
 const at = (iso) => Date.parse(iso);
 const MINUTE = 60 * 1000;
@@ -66,37 +66,24 @@ test('an entry refused after a fresh login needs attention straight away, once',
   assert.equal(restored.refused(), null);
 });
 
-const final27 = {
-  electricityYesterday: {
-    date: '2026-10-27', kWh: 11.196, pounds: 2.87, final: true,
-  },
-  gasLatestDay: { date: '2026-10-27', kWh: 0, pounds: 0 },
-};
-
-test("a final day is announced once, with its electricity and gas", () => {
-  assert.deepEqual(dayToAnnounce(final27, { now: at('2026-10-28T09:00:00Z'), hasGas: true, announced: '2026-10-26' }), {
-    date: '2026-10-27',
-    tokens: {
-      date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 2.87, gas_kwh: 0, gas_cost: 0,
+test('electricity: a final yesterday is announced once', () => {
+  const figures = {
+    electricityYesterday: {
+      date: '2026-10-27', kWh: 11.196, pounds: 2.87, final: true,
     },
-  });
-  assert.equal(dayToAnnounce(final27, { now: at('2026-10-28T09:15:00Z'), hasGas: true, announced: '2026-10-27' }), null);
+  };
+  assert.equal(electricityDayToAnnounce(figures, '2026-10-26'), figures.electricityYesterday);
+  assert.equal(electricityDayToAnnounce(figures, null), figures.electricityYesterday);
+  assert.equal(electricityDayToAnnounce(figures, '2026-10-27'), null);
+  assert.equal(electricityDayToAnnounce({ electricityYesterday: { ...figures.electricityYesterday, final: false } }, '2026-10-26'), null);
+  assert.equal(electricityDayToAnnounce({ electricityYesterday: null }, '2026-10-26'), null);
 });
 
-test('a day not yet final is not announced', () => {
-  const figures = { ...final27, electricityYesterday: { ...final27.electricityYesterday, final: false } };
-  assert.equal(dayToAnnounce(figures, { now: at('2026-10-28T09:00:00Z'), hasGas: true, announced: '2026-10-26' }), null);
-  assert.equal(dayToAnnounce({ electricityYesterday: null, gasLatestDay: null }, { now: at('2026-10-28T09:00:00Z'), hasGas: false }), null);
-});
-
-test("the day waits for its gas until 18:00 the next day, then goes with gas as 0", () => {
-  const lateGas = { ...final27, gasLatestDay: { date: '2026-10-26', kWh: 28.081, pounds: 2.22 } };
-  assert.equal(dayToAnnounce(lateGas, { now: at('2026-10-28T17:59:00Z'), hasGas: true, announced: '2026-10-26' }), null);
-  const announced = dayToAnnounce(lateGas, { now: at('2026-10-28T18:00:00Z'), hasGas: true, announced: '2026-10-26' });
-  assert.equal(announced.tokens.gas_kwh, 0);
-  assert.equal(announced.tokens.electricity_kwh, 11.196);
-
-  // Without gas, nothing to wait for.
-  const noGas = { electricityYesterday: final27.electricityYesterday, gasLatestDay: null };
-  assert.equal(dayToAnnounce(noGas, { now: at('2026-10-28T09:00:00Z'), hasGas: false, announced: '2026-10-26' }).tokens.gas_kwh, 0);
+test('gas: every day since the last one announced, oldest first, at most a week', () => {
+  assert.deepEqual(gasDaysToAnnounce('2026-10-27', '2026-10-26'), ['2026-10-27']);
+  assert.deepEqual(gasDaysToAnnounce('2026-10-27', '2026-10-24'), ['2026-10-25', '2026-10-26', '2026-10-27']);
+  assert.deepEqual(gasDaysToAnnounce('2026-10-27', '2026-10-27'), []);
+  assert.deepEqual(gasDaysToAnnounce(null, '2026-10-27'), []);
+  assert.equal(gasDaysToAnnounce('2026-10-27', '2026-09-01').length, 7);
+  assert.equal(gasDaysToAnnounce('2026-10-27', '2026-09-01')[0], '2026-10-21');
 });
