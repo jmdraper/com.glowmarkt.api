@@ -266,6 +266,18 @@ test('without a reading just before midnight, today stays empty until the next m
   assert.equal(gap.reading(at('2026-10-29T00:30:00Z'), 10_368_300), null);
 });
 
+test('polling less often than every 15 minutes still crosses midnight', () => {
+  const HOUR = 60 * 60 * 1000;
+  const hourly = new ImportToday();
+  hourly.reading(at('2026-10-28T23:10:00Z'), 10_368_000, HOUR);
+  assert.equal(hourly.reading(at('2026-10-29T00:10:00Z'), 10_368_300, HOUR), 0);
+
+  // A gap longer than the poll interval plus a minute still doesn't count.
+  const missed = new ImportToday();
+  missed.reading(at('2026-10-28T22:50:00Z'), 10_368_000, HOUR);
+  assert.equal(missed.reading(at('2026-10-29T00:10:00Z'), 10_368_300, HOUR), null);
+});
+
 test('midnight is London midnight, and a register that goes backwards empties today', () => {
   const summer = new ImportToday();
   summer.reading(at('2026-07-01T22:59:50Z'), 1_000_000);

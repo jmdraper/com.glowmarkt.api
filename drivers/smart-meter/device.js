@@ -108,7 +108,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       const [registerAt, wh] = energyRes.data[0];
       const kWh = wh / 1000;
       this.setCapabilityValue('meter_power.imported', kWh).catch(this.error);
-      await this.setIfChanged('electricity_today', this.importToday.reading(registerAt * 1000, wh));
+      await this.setIfChanged('electricity_today', this.importToday.reading(registerAt * 1000, wh, this.pollFrequency));
       this.cloudStatus.lastSuccessAt = Date.now();
     } catch (error) {
       this.error('updateDevice failed:', error.message);
