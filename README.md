@@ -2,7 +2,7 @@
 
 The [Glowmarkt Display and CAD \(Consumer Access Display\)](https://shop.glowmarkt.com) allows you to see real time usage and tariff information from your UK smart meter. Versions are available to connect to most UK SMETS 1 and SMETS 2 meters. This app brings your smart meter readings into Homey in two ways:
 
-* **Display and CAD (API):** the original device, which reads your electricity usage from the Glowmarkt cloud.
+* **Display and CAD (API):** the original device, which reads your electricity usage from the Glowmarkt cloud, with daily figures and costs for electricity and gas.
 * **Glow electricity meter (local) and Glow gas meter (local):** devices that read your display's local MQTT feed directly, without the internet. These add gas, exported electricity and display link status.
 
 You can use either or both. Nothing changes for the cloud device if you never add a local one: the app doesn't run anything for the local devices, or open any network port, until you add one.
@@ -15,13 +15,32 @@ The app needs Homey firmware 12.9.0 or later.
 
 Once you have your device set up and working with the Bright app, you can add it to Homey. (In theory, you should also be able to use this to connect a Glowmarkt Zigbee CAD as well but I don't have one of those devices so have not been able to test.)
 
-When you add the device in Homey, you will be asked to enter your Bright app credentials. This is the same username and password you use to connect in your Bright app. The pairing process will then show any 'virtual entities' connected to your account. A virtual entity broadly equates to a single metered supply so generally there should be exactly one of these. Entries that Glowmarkt won't give readings for are left out.
+When you add the device in Homey, you will be asked to enter your Bright app credentials. This is the same username and password you use to connect in your Bright app. The pairing process will then show any 'virtual entities' connected to your account. A virtual entity broadly equates to a single metered supply so generally there should be exactly one of these. Entries that Glowmarkt won't give readings for, or that have no electricity consumption, are left out.
 
 Once you have paired your device, you should see current power usage readings appearing right away on the tile and the tariff is shown in the device view. The device will also appear as a Smart Meter in the energy tab in the Homey app. The smart meter measures your home's total energy usage and so Homey subtracts the power usage of all other devices it knows about from this figure and shows the difference as 'Other'. More information on this feature here: https://support.homey.app/hc/en-us/articles/360010187820-Saving-energy-with-Homey-Energy
 
-By default, the current power usage is updated every 10s (which is approximately the frequency with which the Glowmarkt CAD updates the Glowmarkt API). You can change this in the device's advanced settings to anything from 10s to 3600s (1 hour). Tariff information is updated once per minute and this is not configurable.
+By default, the current power usage is updated every 10s (which is approximately the frequency with which the Glowmarkt CAD updates the Glowmarkt API). You can change this in the device's advanced settings to anything from 10s to 3600s (1 hour). The tariff is updated every half hour, just after the hour and half hour, and the daily figures every 15 minutes.
 
-The app's settings page has a Cloud section showing, for each account, when the device last read successfully, the last error, any entries left out at pairing, and when the login next renews.
+The app's settings page has a Cloud section showing, for each account, when the device last read successfully, the last error, any entries left out at pairing, and when the login next renews. For each device it also shows which of Glowmarkt's copies of each reading it uses, how recent each one's data is, and the last tariff Glowmarkt gave.
+
+### What the cloud device shows
+
+* **Power, energy and tariff:** live power, the imported energy total that feeds Homey Energy, and the electricity unit rate.
+* **Electricity today:** energy imported since midnight, from the meter's import register. It needs a reading from just before midnight, so it stays empty until the next midnight after you add the device, or if Homey was off over midnight.
+* **Electricity yesterday** and **Electricity cost yesterday:** Glowmarkt first fills each day from your display, then replaces it with the meter's own figures. These show yesterday only once that has happened, and are empty until then.
+* **Gas, latest complete day**, with its date and cost: Glowmarkt receives gas in whole days, a day or more late, so there's no gas figure for today.
+* **Standing charge**, and for gas the **unit rate** and **standing charge**, from your tariff in Glowmarkt. If Glowmarkt never gives a gas tariff for your meter, you can enter the gas standing charge in the device's settings.
+* **Data up to:** the time of Glowmarkt's latest electricity reading.
+
+Costs come from Glowmarkt, which prices each half hour, and are for energy only, without the standing charge. Only the power and imported energy total feed Homey Energy.
+
+### Cloud flow cards
+
+* *Meter stopped reporting* and *Meter resumed reporting*, and the *Meter is reporting* condition: Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than the device's *Stale after* setting (5 minutes by default).
+* *Account needs attention*, with the reason, and the *Account is OK* condition: fires once when logging in has failed for 30 minutes, or Glowmarkt refuses the meter even after logging in again, and again only after the account has worked in between.
+* *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: power has been negative, or zero or positive, for a minute.
+* *New day's figures*: once a day, when yesterday's figures are final, with the date, electricity and gas in kWh and their costs in £. It waits for that day's gas until 18:00 the next day, then gives gas as 0.
+* *Tariff changed*: the electricity unit rate has changed.
 
 ## Local meters (display MQTT)
 

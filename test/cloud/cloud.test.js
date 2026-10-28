@@ -48,9 +48,16 @@ function resetApi(extra = {}) {
         { veId: 've-broken-0004', name: 'Broken entry', postalCode: 'YO10 3DD' },
       ],
     },
-    'GET /virtualentity/ve-good-0001/resources': { body: { resources: [{ resourceId: 'res-gas-0001', name: 'gas consumption' }, { resourceId: 'res-good-0001', name: 'electricity consumption' }] } },
+    'GET /virtualentity/ve-good-0001/resources': {
+      body: {
+        resources: [
+          { resourceId: 'res-gas-0001', classifier: 'gas.consumption', name: 'gas consumption' },
+          { resourceId: 'res-good-0001', classifier: 'electricity.consumption', name: 'electricity consumption' },
+        ],
+      },
+    },
     // The stale entry lists its resources normally and only fails on /current.
-    'GET /virtualentity/ve-stale-0002/resources': { body: { resources: [{ resourceId: 'res-stale-0002', name: 'electricity consumption' }] } },
+    'GET /virtualentity/ve-stale-0002/resources': { body: { resources: [{ resourceId: 'res-stale-0002', classifier: 'electricity.consumption', name: 'electricity consumption' }] } },
     'GET /virtualentity/ve-empty-0003/resources': { body: { resources: [] } },
     'GET /virtualentity/ve-broken-0004/resources': { status: 500 },
     'GET /resource/res-good-0001/current': { body: { data: [[1761400000, 512]] } },
@@ -59,9 +66,17 @@ function resetApi(extra = {}) {
   };
 }
 
+const triggered = [];
+const conditions = {};
+
 function makeDriver(devices = []) {
   const driver = new Driver();
-  driver.homey = { flow: { getDeviceTriggerCard: () => ({ trigger: async () => {} }) } };
+  driver.homey = {
+    flow: {
+      getDeviceTriggerCard: (id) => ({ trigger: async (device, tokens) => { triggered.push({ id, tokens }); } }),
+      getConditionCard: (id) => ({ registerRunListener: (listener) => { conditions[id] = listener; } }),
+    },
+  };
   driver.log = () => {};
   driver.error = () => {};
   driver.getDevices = () => devices;
@@ -220,28 +235,59 @@ test('summarise strips IDs, URLs and bodies from unexpected errors', () => {
   assert.equal(summarise(undefined), 'Unknown error');
 });
 
-// Device lifecycle
+// Device lifecycle and the new capabilities and cards
 
-function startDevice({ pollFrequency } = {}) {
+const AccountHealth = require('../../lib/cloud/AccountHealth');
+const { fakeCloudApi, RECORDED_AT, ENTRIES, ID } = require('../helpers/fake-cloud-api');
+
+const settle = () => new Promise((resolve) => { setTimeout(resolve, 10); });
+const realNow = Date.now;
+let now = realNow();
+test.beforeEach(() => {
+  now = RECORDED_AT;
+  Date.now = () => now;
+});
+test.afterEach(() => { Date.now = realNow; });
+
+/**
+ * A cloud device with Homey's timers, settings and capabilities stood in for.
+ * With `api`, its requests go to that fake API instead of node-fetch.
+ */
+function startDevice({
+  pollFrequency, settings: extraSettings = {}, store: storeValues = {}, api, capabilities = {},
+} = {}) {
   resetApi();
+  triggered.length = 0;
   const driver = makeDriver();
   const { device, store } = makeDevice(driver);
+  Object.assign(store, storeValues);
   const active = new Map();
+  const timeouts = new Map();
   let nextId = 1;
-  device.homey.setInterval = (fn, ms) => {
-    const id = nextId++;
-    active.set(id, ms);
-    return id;
+  Object.assign(device.homey, {
+    setInterval: (fn, ms) => { active.set(nextId, ms); return nextId++; },
+    clearInterval: (id) => { active.delete(id); },
+    setTimeout: (fn, ms) => { timeouts.set(nextId, { fn, ms }); return nextId++; },
+    clearTimeout: (id) => { timeouts.delete(id); },
+  });
+  const settings = {
+    username: USERNAME, password: 'pw', pollFrequency, ...extraSettings,
   };
-  device.homey.clearInterval = (id) => { active.delete(id); };
-  const settings = { username: USERNAME, password: 'pw', pollFrequency };
+  const caps = new Map(Object.entries({
+    measure_power: null, 'meter_power.imported': null, tariff: null, ...capabilities,
+  }));
   Object.assign(device, {
     getSettings: () => settings,
-    hasCapability: () => true,
-    getCapabilityValue: () => null,
-    setCapabilityValue: async () => {},
+    getSetting: (key) => settings[key],
+    getData: () => ({ id: ENTRIES[0].veId }),
+    hasCapability: (capability) => caps.has(capability),
+    addCapability: async (capability) => { caps.set(capability, null); },
+    setCapabilityOptions: async () => {},
+    getCapabilityValue: (capability) => caps.get(capability) ?? null,
+    setCapabilityValue: async (capability, value) => { caps.set(capability, value); },
     setAvailable: async () => {},
   });
+  if (api) device.request = api.request;
   let inits = 0;
   const onInit = device.onInit.bind(device);
   device.onInit = async () => {
@@ -249,19 +295,21 @@ function startDevice({ pollFrequency } = {}) {
     return onInit();
   };
   return {
-    device, store, active, inits: () => inits,
+    device, store, active, timeouts, caps, settings, inits: () => inits,
   };
 }
+
+const READINGS_MS = 15 * 60 * 1000;
 
 test('changing the poll frequency restarts polling without running setup again', async () => {
   const { device, active, inits } = startDevice({ pollFrequency: 10 });
   await device.onInit();
-  assert.deepEqual([...active.values()], [10000, 60000]);
+  assert.deepEqual([...active.values()], [10000, READINGS_MS, 60000]);
   const before = [...active.keys()];
 
   await device.onSettings({ oldSettings: {}, newSettings: { pollFrequency: 30 }, changedKeys: ['pollFrequency'] });
   assert.equal(inits(), 1);
-  assert.deepEqual([...active.values()], [30000, 60000]);
+  assert.deepEqual([...active.values()], [30000, READINGS_MS, 60000]);
   assert.ok(before.every((id) => !active.has(id)), 'old timers still running');
 });
 
@@ -271,25 +319,213 @@ test('new login details restart polling with the new token', async () => {
   store.token = 'old-token';
   await device.onSettings({ oldSettings: {}, newSettings: { username: USERNAME, password: 'new' }, changedKeys: ['password'] });
   assert.equal(store.token, FRESH_TOKEN);
-  assert.equal(active.size, 2);
+  assert.equal(active.size, 3);
 });
 
 test('settings polling does not depend on leave it running', async () => {
   const { device, active } = startDevice();
   await device.onInit();
   const before = [...active.keys()];
-  await device.onSettings({ oldSettings: {}, newSettings: {}, changedKeys: ['stale_after'] });
+  await device.onSettings({ oldSettings: {}, newSettings: { stale_after: 10 }, changedKeys: ['stale_after'] });
   assert.deepEqual([...active.keys()], before);
 });
 
 test('every timer stops when the app stops or the device is deleted', async () => {
-  const stopped = startDevice();
+  const stopped = startDevice({ api: fakeCloudApi() });
   await stopped.device.onInit();
+  await settle();
+  assert.equal(stopped.timeouts.size, 1, 'the next tariff fetch is scheduled');
   await stopped.device.onUninit();
   assert.equal(stopped.active.size, 0);
+  assert.equal(stopped.timeouts.size, 0);
 
   const deleted = startDevice();
   await deleted.device.onInit();
   await deleted.device.onDeleted();
   assert.equal(deleted.active.size, 0);
+});
+
+test('the next tariff fetch is 30 s after the next half hour', async () => {
+  const { device, timeouts } = startDevice({ api: fakeCloudApi() });
+  await device.onInit();
+  await settle();
+  // 13:40:33 → 14:00:30
+  assert.deepEqual([...timeouts.values()].map(({ ms }) => ms), [Date.parse('2026-10-28T14:00:30Z') - RECORDED_AT]);
+});
+
+test('an existing device gains the new capabilities, and the gas ones once its entry shows gas', async () => {
+  const { device, caps, store } = startDevice({ api: fakeCloudApi(), store: { elec_cons_res: ID['gas.consumption|gas consumption'] } });
+  await device.onInit();
+  for (const capability of ['standing_charge', 'electricity_today', 'electricity_yesterday', 'electricity_cost_yesterday', 'data_up_to']) {
+    assert.ok(caps.has(capability), capability);
+  }
+  await settle();
+  for (const capability of ['gas_day', 'gas_day_energy', 'gas_day_cost', 'tariff.gas', 'standing_charge.gas']) {
+    assert.ok(caps.has(capability), capability);
+  }
+  // A device paired by name onto the gas resource moves to electricity consumption.
+  assert.equal(store.elec_cons_res, ID['electricity.consumption|electricity consumption']);
+});
+
+test('yesterday, the latest gas day and data up to come from the readings poll', async () => {
+  const { device, caps } = startDevice({ api: fakeCloudApi() });
+  await device.onInit();
+  await settle();
+  assert.equal(caps.get('electricity_yesterday'), 11.196);
+  assert.equal(caps.get('electricity_cost_yesterday'), 2.87);
+  assert.equal(caps.get('gas_day'), 'Tue 27 Oct');
+  assert.equal(caps.get('gas_day_energy'), 0);
+  assert.equal(caps.get('gas_day_cost'), 0);
+  assert.equal(caps.get('data_up_to'), 'Wed 28 Oct 13:18');
+});
+
+test('rates and standing charges come from /tariff, and Tariff changed fires when the rate changes', async () => {
+  const { device, caps } = startDevice({ api: fakeCloudApi(), capabilities: { tariff: 24.5 } });
+  await device.onInit();
+  await settle();
+  assert.equal(caps.get('tariff'), 25.63);
+  assert.equal(caps.get('standing_charge'), 60.7);
+  assert.equal(caps.get('tariff.gas'), 7.92);
+  assert.equal(caps.get('standing_charge.gas'), 28.84);
+  assert.deepEqual(triggered.filter((t) => t.id === 'tariff_changed').map((t) => t.tokens), [{ tariff: 25.63 }]);
+});
+
+test('without a gas tariff ever, the gas standing charge comes from the setting', async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  const api = fakeCloudApi({
+    overrides: {
+      [`tariff ${ID['gas.consumption|gas consumption']}`]: timeout,
+      [`tariff ${ID['gas.consumption|Smart Meter, gas consumption']}`]: timeout,
+    },
+  });
+  const { device, caps } = startDevice({ api, settings: { gas_standing_charge: 30.5 } });
+  await device.onInit();
+  await settle();
+  assert.equal(caps.get('standing_charge.gas'), 30.5);
+  assert.equal(caps.get('tariff.gas'), null);
+  assert.equal(caps.get('standing_charge'), 60.7);
+
+  await device.onSettings({ oldSettings: {}, newSettings: { gas_standing_charge: 0 }, changedKeys: ['gas_standing_charge'] });
+  assert.equal(caps.get('standing_charge.gas'), null);
+});
+
+test("New day's figures doesn't fire on the first poll after install", async () => {
+  const { device, store } = startDevice({ api: fakeCloudApi() });
+  await device.onInit();
+  await settle();
+  assert.equal(store.announcedDay, '2026-10-27');
+  assert.equal(triggered.filter((t) => t.id === 'cloud_new_day_figures').length, 0);
+});
+
+test("New day's figures fires once for a final day", async () => {
+  const { device } = startDevice({ api: fakeCloudApi(), store: { announcedDay: '2026-10-26' } });
+  await device.onInit();
+  await settle();
+  await device.updateReadings();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_new_day_figures').map((t) => t.tokens), [{
+    date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 2.87, gas_kwh: 0, gas_cost: 0,
+  }]);
+});
+
+test('stopped and resumed reporting follow the time of the live reading', async () => {
+  let readingAt = 1793194800;
+  const api = fakeCloudApi({ overrides: { current: () => ({ data: [[readingAt, 250]] }) } });
+  const { device } = startDevice({ api });
+  await device.onInit();
+  await settle();
+  assert.equal(conditions.cloud_is_reporting({ device }), true);
+
+  // The same reading for six minutes
+  now += 6 * 60 * 1000;
+  await device.updateDevice();
+  await device.everyMinute();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_stopped_reporting').map((t) => t.tokens), [{ minutes: 6 }]);
+  assert.equal(conditions.cloud_is_reporting({ device }), false);
+  await device.everyMinute();
+  assert.equal(triggered.filter((t) => t.id === 'cloud_stopped_reporting').length, 1);
+
+  readingAt += 400;
+  await device.updateDevice();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_resumed_reporting').map((t) => t.tokens), [{ minutes: 6 }]);
+  assert.equal(conditions.cloud_is_reporting({ device }), true);
+});
+
+test('exporting starts and stops after a minute either side of zero', async () => {
+  let watts = 250;
+  const api = fakeCloudApi({ overrides: { current: () => ({ data: [[Math.floor(now / 1000), watts]] }) } });
+  const { device } = startDevice({ api });
+  await device.onInit();
+  await settle();
+
+  watts = -300;
+  for (let i = 0; i < 6; i++) {
+    now += 10000;
+    await device.updateDevice();
+  }
+  assert.equal(conditions.cloud_is_exporting({ device }), false);
+  now += 10000;
+  await device.updateDevice();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_started_exporting').map((t) => t.tokens), [{ power: -300 }]);
+  assert.equal(conditions.cloud_is_exporting({ device }), true);
+
+  watts = 120;
+  for (let i = 0; i < 7; i++) {
+    now += 10000;
+    await device.updateDevice();
+  }
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_stopped_exporting').map((t) => t.tokens), [{ power: 120 }]);
+  assert.equal(conditions.cloud_is_exporting({ device }), false);
+});
+
+test('account needs attention once after 30 minutes of failed logins, and again only after recovering', async () => {
+  resetApi({
+    'POST /auth': { body: { valid: false } },
+    'GET /resource/res-good-0001/current': { status: 401, body: { error: 'expired' } },
+  });
+  triggered.length = 0;
+  const driver = makeDriver();
+  const { device } = makeDevice(driver, { token: 'old-token' });
+  device.health = new AccountHealth();
+  const attention = () => triggered.filter((t) => t.id === 'cloud_account_attention').map((t) => t.tokens.reason);
+
+  await device.request('/resource/res-good-0001/current').catch(() => {});
+  now += 29 * 60 * 1000;
+  await device.request('/resource/res-good-0001/current').catch(() => {});
+  assert.deepEqual(attention(), []);
+  now += 60 * 1000;
+  await device.request('/resource/res-good-0001/current').catch(() => {});
+  await device.request('/resource/res-good-0001/current').catch(() => {});
+  assert.deepEqual(attention(), ['cloud.attention.login_failing']);
+  assert.equal(conditions.cloud_account_ok({ device }), false);
+
+  routes['POST /auth'] = { body: { valid: true, token: FRESH_TOKEN } };
+  routes['GET /resource/res-good-0001/current'] = { body: { data: [[1, 2]] } };
+  await device.request('/resource/res-good-0001/current');
+  assert.equal(conditions.cloud_account_ok({ device }), true);
+});
+
+test('account needs attention when the entry is refused after a fresh login', async () => {
+  resetApi();
+  triggered.length = 0;
+  const driver = makeDriver();
+  const { device } = makeDevice(driver);
+  device.health = new AccountHealth();
+  device.setUnavailable = async () => {};
+  await device.request('/resource/res-stale-0002/current').catch(() => {});
+  await settle();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_account_attention').map((t) => t.tokens), [{ reason: 'cloud.attention.not_authorised' }]);
+});
+
+test('cloud status shows the copies in use and the last tariff, without IDs', async () => {
+  const { device } = startDevice({ api: fakeCloudApi() });
+  await device.onInit();
+  await settle();
+  const status = device.getCloudStatus();
+  assert.deepEqual(status.readings.find((r) => r.classifier === 'electricity.consumption'), {
+    classifier: 'electricity.consumption', copy: 'electricity consumption', dataUpTo: Date.parse('2026-10-28T13:18:00Z'),
+  });
+  assert.deepEqual(status.tariff, {
+    at: RECORDED_AT, electricity: { rate: 25.63, standingCharge: 60.7 }, gas: { rate: 7.92, standingCharge: 28.84 },
+  });
+  assert.ok(!JSON.stringify(status).includes('00000000-'), 'status contains a resource ID');
 });

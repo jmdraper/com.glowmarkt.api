@@ -3,6 +3,7 @@
 const { Driver } = require('homey');
 const { authenticate, apiGet, summarise } = require('../../lib/cloud/glowmarkt');
 const { maskPostcodes } = require('../../lib/glow/mask');
+const { liveElectricityResource } = require('../../lib/cloud/resources');
 
 class GlowmarktUKSmartMeter_driver extends Driver {
 
@@ -12,6 +13,19 @@ class GlowmarktUKSmartMeter_driver extends Driver {
   async onInit() {
     this.log('Glowmarkt UK Smart Meter driver has been initialized');
     this.tariffChangedTrigger = this.homey.flow.getDeviceTriggerCard('tariff_changed');
+    const trigger = (id) => this.homey.flow.getDeviceTriggerCard(`cloud_${id}`);
+    this.cards = {
+      stopped: trigger('stopped_reporting'),
+      resumed: trigger('resumed_reporting'),
+      accountAttention: trigger('account_attention'),
+      startedExporting: trigger('started_exporting'),
+      stoppedExporting: trigger('stopped_exporting'),
+      newDay: trigger('new_day_figures'),
+    };
+    const condition = (id, test) => this.homey.flow.getConditionCard(`cloud_${id}`).registerRunListener(({ device }) => test(device));
+    condition('is_reporting', (device) => device.isReporting());
+    condition('account_ok', (device) => device.isAccountOk());
+    condition('is_exporting', (device) => device.isExporting());
     this.logins = new Map();
     // entries left out of the latest pairing, per account, since the app started
     this.pairingSkips = new Map();
@@ -122,19 +136,22 @@ class GlowmarktUKSmartMeter_driver extends Driver {
       return { skipped: { code: 'no_resources' } };
     }
 
-    // find a resource object in the resources array whose name property is 'electricity consumption'
-    // if no such resource found, just use the first resource and hope that's right
-    const elec_cons_res = resources.find((resource) => resource.name === 'electricity consumption') || resources[0];
+    // live power and the import register come from an electricity.consumption resource
+    const elec_cons_res = liveElectricityResource(resources, null);
+    if (!elec_cons_res) {
+      this.log(`Skipping virtual entity ${virtualEntity.name}: no electricity consumption resource`);
+      return { skipped: { code: 'no_electricity' } };
+    }
 
     // check the resource can actually be read
-    const current = await apiGet(`/resource/${elec_cons_res.resourceId}/current`, token);
+    const current = await apiGet(`/resource/${elec_cons_res}/current`, token);
     if (!current.ok) {
       this.log(`Skipping virtual entity ${virtualEntity.name}: its resource returned HTTP ${current.status}`);
       return { skipped: { code: 'read_failed', status: current.status } };
     }
 
     // create store object
-    const deviceStore = { elec_cons_res: elec_cons_res.resourceId, token: token };
+    const deviceStore = { elec_cons_res, token: token };
 
     // return a homey device object
     return {

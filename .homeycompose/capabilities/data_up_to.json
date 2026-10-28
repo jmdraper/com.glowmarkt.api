@@ -1,0 +1,11 @@
+{
+  "type": "string",
+  "title": {
+    "en": "Data up to"
+  },
+  "uiComponent": "sensor",
+  "getable": true,
+  "setable": false,
+  "insights": false,
+  "icon": "/assets/calendar.svg"
+}

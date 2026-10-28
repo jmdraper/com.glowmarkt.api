@@ -1,0 +1,11 @@
+{
+  "type": "string",
+  "title": {
+    "en": "Gas latest complete day"
+  },
+  "uiComponent": "sensor",
+  "getable": true,
+  "setable": false,
+  "insights": false,
+  "icon": "/assets/calendar.svg"
+}

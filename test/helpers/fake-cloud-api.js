@@ -44,7 +44,9 @@ function fakeCloudApi({ overrides = {} } = {}) {
     if (override instanceof Error) throw override;
     if (override) return override;
 
-    const call = recorded(endpoint === 'readings' ? 'readings:recent' : endpoint, id);
+    const call = pathname.startsWith('/virtualentity/')
+      ? recording.calls.find((c) => c.path === pathname)
+      : recorded(endpoint === 'readings' ? 'readings:recent' : endpoint, id);
     if (!call) throw httpError(404);
     if (call.status !== 200) throw httpError(call.status);
     if (endpoint !== 'readings') return call.body;

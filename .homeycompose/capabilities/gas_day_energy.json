@@ -1,0 +1,15 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Gas, latest complete day"
+  },
+  "uiComponent": "sensor",
+  "getable": true,
+  "setable": false,
+  "units": {
+    "en": "kWh"
+  },
+  "insights": true,
+  "decimals": 3,
+  "icon": "/assets/gas_energy.svg"
+}

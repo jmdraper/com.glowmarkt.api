@@ -1,0 +1,15 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Gas cost, latest complete day"
+  },
+  "uiComponent": "sensor",
+  "getable": true,
+  "setable": false,
+  "units": {
+    "en": "£"
+  },
+  "insights": true,
+  "decimals": 2,
+  "icon": "/assets/cost.svg"
+}

@@ -370,6 +370,7 @@
             table.appendChild(row);
           }
           box.appendChild(table);
+          for (const device of account.devices) renderCloudReadings(box, device);
         }
 
         if (account.skipped.length) {
@@ -382,6 +383,35 @@
           box.appendChild(list);
         }
         container.appendChild(box);
+      }
+    }
+
+    // Which copy of each resource a device reads, how recent its data is, and
+    // the last tariff fetch.
+    function renderCloudReadings(box, device) {
+      if (!(device.readings && device.readings.length) && !device.tariff) return;
+      box.appendChild(el('p', t('settings.readingsFor', { name: device.name }), 'glow-note'));
+      if (device.readings && device.readings.length) {
+        const table = el('table');
+        const head = el('tr');
+        [t('settings.resource'), t('settings.copyInUse'), t('settings.dataUpTo')].forEach((h) => head.appendChild(el('th', h)));
+        table.appendChild(head);
+        for (const entry of device.readings) {
+          const row = el('tr');
+          [entry.classifier, entry.copy || '—', entry.dataUpTo ? formatTime(entry.dataUpTo) : '—'].forEach((v) => row.appendChild(el('td', v)));
+          table.appendChild(row);
+        }
+        box.appendChild(table);
+      }
+      if (device.tariff) {
+        const describe = (key, rates) => (rates
+          ? t('settings.tariffRates', { commodity: t(`settings.${key}`), rate: rates.rate ?? '—', standing: rates.standingCharge ?? '—' })
+          : t('settings.tariffNoAnswer', { commodity: t(`settings.${key}`) }));
+        const parts = [describe('electricity', device.tariff.electricity)];
+        if (device.tariff.gas !== undefined) parts.push(describe('gas', device.tariff.gas));
+        const dl = el('dl');
+        addPair(dl, t('settings.tariffAt', { time: formatTime(device.tariff.at) }), parts.join('; '));
+        box.appendChild(dl);
       }
     }
 

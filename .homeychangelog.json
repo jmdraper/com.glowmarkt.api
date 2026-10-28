@@ -31,5 +31,8 @@
   },
   "1.2.0": {
     "en": "New Glow gas meter (local) and Glow electricity meter (local) devices read your Glow display's MQTT feed directly, without the internet, and bring gas into Homey Energy. Fixes for the cloud Display and CAD device: account entries that return errors are skipped, the login renews itself, and Tariff changed now fires. This version needs Homey 12.9.0 or later. Homeys on older firmware stay on version 1.1.7 and don't get the cloud fixes, so update Homey first."
+  },
+  "1.3.0": {
+    "en": "Display and CAD (API): electricity used today and yesterday with its cost, gas for the latest complete day with its cost, standing charges and the gas unit rate, and when Glowmarkt's data is up to. New flow cards for each day's figures, exporting, and a meter or account that stops working. The tariff is now checked every half hour, and changing a device's settings no longer starts a second set of polls."
   }
 }

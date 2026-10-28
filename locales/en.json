@@ -75,16 +75,27 @@
     "cloudOk": "OK",
     "cloudUnavailable": "Unavailable",
     "cloudRefused": "Access refused; trying again after __time__",
+    "readingsFor": "Readings for __name__",
+    "resource": "Resource",
+    "copyInUse": "Copy in use",
+    "dataUpTo": "Data up to",
+    "tariffAt": "Tariff, __time__",
+    "tariffRates": "__commodity__ __rate__ p/kWh, __standing__ p/day",
+    "tariffNoAnswer": "__commodity__: no answer",
+    "electricity": "Electricity",
+    "gas": "Gas",
     "poll": {
       "power": "Power",
-      "tariff": "Tariff"
+      "tariff": "Tariff",
+      "readings": "Readings"
     },
     "skippedEntries": "Left out at the last pairing",
     "skipReason": {
       "resources_failed": "its resources couldn't be listed (HTTP __status__)",
       "no_resources": "it has no resources",
       "read_failed": "its electricity reading failed (HTTP __status__)",
-      "error": "__message__"
+      "error": "__message__",
+      "no_electricity": "it has no electricity consumption resource"
     },
     "debugTitle": "Debug log",
     "debugHint": "The last 50 messages, newest first. MPAN, MPRN, EUI and supplier are masked to their last four characters.",
@@ -104,7 +115,11 @@
     }
   },
   "cloud": {
-    "accessRefused": "Glowmarkt is refusing access to this meter (HTTP 401), even after logging in again. Trying again every hour."
+    "accessRefused": "Glowmarkt is refusing access to this meter (HTTP 401), even after logging in again. Trying again every hour.",
+    "attention": {
+      "login_failing": "login failing",
+      "not_authorised": "entry not authorised"
+    }
   },
   "pair": {
     "gasmeter": {
