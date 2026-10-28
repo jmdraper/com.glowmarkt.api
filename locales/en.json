@@ -89,6 +89,9 @@
       "tariff": "Tariff",
       "readings": "Readings"
     },
+    "cloudEvents": "Cloud events",
+    "cloudEventsHint": "The last 30 events for each device, newest first: polling, logins, errors, tariff fetches and flow cards fired. Repeats are counted on one line. Kept until the app restarts.",
+    "cloudEventsEmpty": "No events yet.",
     "skippedEntries": "Left out at the last pairing",
     "skipReason": {
       "resources_failed": "its resources couldn't be listed (HTTP __status__)",

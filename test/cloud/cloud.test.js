@@ -517,6 +517,38 @@ test('cloud status shows the copies in use and the last tariff, without IDs', as
   assert.ok(!JSON.stringify(status).includes('00000000-'), 'status contains a resource ID');
 });
 
+test('cloud events list polling, tariff fetches and cards, newest first, without IDs', async () => {
+  const { device } = startDevice({ api: fakeCloudApi(), capabilities: { tariff: 24.5 } });
+  await device.onInit();
+  await settle();
+  const texts = device.getCloudStatus().events.map((e) => e.text);
+  assert.equal(texts[texts.length - 1], 'Polling started, power every 10 s');
+  assert.ok(texts.includes('Tariff from electricity consumption: 25.63 p/kWh, 60.7 p/day'), texts.join('; '));
+  assert.ok(texts.includes('Tariff changed from 24.5 to 25.63 p/kWh'), texts.join('; '));
+  assert.ok(!JSON.stringify(device.getCloudStatus().events).includes('00000000-'), 'events contain a resource ID');
+});
+
+test('a repeated cloud event is counted on one line, and only the last 30 are kept', () => {
+  const driver = makeDriver();
+  const { device } = makeDevice(driver);
+  device.event('Power poll failed: HTTP 503 from /current', 1000);
+  device.event('Power poll failed: HTTP 503 from /current', 2000);
+  assert.deepEqual(device.events, [{ at: 2000, text: 'Power poll failed: HTTP 503 from /current', count: 2 }]);
+  for (let i = 0; i < 40; i += 1) device.event(`event ${i}`, 3000 + i);
+  assert.equal(device.events.length, 30);
+  assert.equal(device.events[0].text, 'event 39');
+});
+
+test('a tariff copy that times out is a cloud event naming the copy', async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  const { device } = startDevice({ api: fakeCloudApi({ overrides: { [`tariff ${ID['electricity.consumption|electricity consumption']}`]: timeout } }) });
+  await device.onInit();
+  await settle();
+  const texts = device.getCloudStatus().events.map((e) => e.text);
+  assert.ok(texts.some((t) => /^Tariff from electricity consumption: no answer after [\d.]+ s, so not asked again today$/.test(t)), texts.join('; '));
+  assert.ok(texts.includes('Tariff from Smart Meter, electricity consumption: 25.63 p/kWh, 60.7 p/day'), texts.join('; '));
+});
+
 // The cloud gas device
 
 const GAS = ID['gas.consumption|gas consumption'];

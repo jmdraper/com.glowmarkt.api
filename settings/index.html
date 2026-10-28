@@ -383,8 +383,50 @@
           }
           box.appendChild(list);
         }
+        renderCloudEvents(box, account);
         container.appendChild(box);
       }
+    }
+
+    // Every device's recent events on the account, newest first, with a button
+    // to copy them for a bug report.
+    function renderCloudEvents(box, account) {
+      const events = account.devices
+        .flatMap((device) => (device.events || []).map((event) => ({ ...event, kind: t(`settings.kind.${device.kind || 'electricity'}`) })))
+        .sort((a, b) => b.at - a.at);
+      const describe = (event) => `${event.kind}: ${event.text}${event.count > 1 ? ` (×${event.count})` : ''}`;
+      box.appendChild(el('h4', t('settings.cloudEvents')));
+      box.appendChild(el('p', t('settings.cloudEventsHint'), 'glow-note'));
+      if (!events.length) {
+        box.appendChild(el('p', t('settings.cloudEventsEmpty'), 'glow-note'));
+        return;
+      }
+      const button = el('button', t('settings.copy'), 'homey-button-secondary-small');
+      button.type = 'button';
+      button.addEventListener('click', () => copyText(events.map((event) => `${new Date(event.at).toISOString()} ${describe(event)}`).join('\n'), button));
+      box.appendChild(button);
+      const list = el('ul', null, 'glow-log');
+      for (const event of events) {
+        const item = el('li');
+        item.appendChild(el('span', `${formatTime(event.at)}  `, 'meta'));
+        item.appendChild(document.createTextNode(describe(event)));
+        list.appendChild(item);
+      }
+      box.appendChild(list);
+    }
+
+    async function copyText(text, button) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (error) {
+        const area = el('textarea', text);
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+      }
+      button.textContent = t('settings.copied');
+      setTimeout(() => { button.textContent = t('settings.copy'); }, 1500);
     }
 
     // Which copy of each resource a device reads, how recent its data is, and

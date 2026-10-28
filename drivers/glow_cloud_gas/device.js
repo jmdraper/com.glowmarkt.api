@@ -30,6 +30,7 @@ class GlowCloudGasDevice extends CloudDevice {
 
   startPolling() {
     this.stopTimers();
+    this.event('Polling started');
     this.updateReadings();
     this.startTariff();
     this.every(() => this.updateReadings(), READINGS_EVERY_MS);
@@ -69,7 +70,7 @@ class GlowCloudGasDevice extends CloudDevice {
     const daysBehind = Math.floor((now - lastTime) / DAY_MS);
     const late = now - lastTime > LATE_AFTER_DAYS * DAY_MS;
     if (late && !this.late) {
-      this.log(`Data is late: ${daysBehind} days behind`);
+      this.event(`Data is late: ${daysBehind} days behind`);
       await this.driver.cards.dataLate.trigger(this, { days: daysBehind }).catch(this.error);
     }
     if (late !== this.late) {
@@ -97,7 +98,7 @@ class GlowCloudGasDevice extends CloudDevice {
       if (!day) break;
       this.announcedDay = date;
       await this.setStoreValue('announcedDay', date).catch(this.error);
-      this.log(`New day's figures for ${date}`);
+      this.event(`New day's figures for ${dayLabel(date)}: ${day.kWh} kWh, £${day.pounds ?? 0}`);
       await this.driver.cards.newDay.trigger(this, {
         date: dayLabel(date), gas_kwh: day.kWh, gas_cost: day.pounds ?? 0,
       }).catch(this.error);
@@ -115,6 +116,7 @@ class GlowCloudGasDevice extends CloudDevice {
       const now = Date.now();
       const answers = await readings.fetchTariffs(now);
       this.tariffResult = { at: now, ...answers };
+      this.tariffEvents('gas');
       await this.saveReadings();
       await this.showTariff();
       if (!answers.gas) throw apiError('No copy of the gas resource answered /tariff');

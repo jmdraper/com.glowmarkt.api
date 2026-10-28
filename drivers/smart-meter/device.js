@@ -28,7 +28,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
    * onInit is called when the device is initialized.
    */
   async onInit() {
-    this.log('Display and CAD (API) initialized');
+    this.log('Electricity meter (cloud) initialized');
     this.commodity = 'electricity';
 
     for (const capability of CAPABILITIES) await this.ensureCapability(capability);
@@ -79,7 +79,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
     this.updateReadings();
     this.startTariff();
 
-    this.log(`Initiating power polling with frequency ${this.pollFrequency}`);
+    this.event(`Polling started, power every ${this.pollFrequency / 1000} s`);
     this.every(() => this.updateDevice(), this.pollFrequency);
     this.every(() => this.updateReadings(), READINGS_EVERY_MS);
     this.every(() => this.everyMinute().catch(this.error), MINUTE_MS);
@@ -130,13 +130,13 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       this.lastPowerAt = readingAt;
       const resumed = this.staleness.arrived(now);
       if (resumed) {
-        this.log(`Resumed reporting after ${resumed.minutesWithout} minutes`);
+        this.event(`Resumed reporting after ${resumed.minutesWithout} minutes`);
         await this.driver.cards.resumed.trigger(this, { minutes: resumed.minutesWithout }).catch(this.error);
       }
     }
     const change = this.exporting.power(watts, now);
     if (change) {
-      this.log(`${change.event === 'started' ? 'Started' : 'Stopped'} exporting at ${change.power} W`);
+      this.event(`${change.event === 'started' ? 'Started' : 'Stopped'} exporting at ${change.power} W`);
       const card = change.event === 'started' ? this.driver.cards.startedExporting : this.driver.cards.stoppedExporting;
       await card.trigger(this, { power: change.power }).catch(this.error);
     }
@@ -146,7 +146,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
     const now = Date.now();
     const stopped = this.staleness.check(now);
     if (stopped) {
-      this.log(`Stopped reporting: no new reading for ${stopped.minutesSince} minutes`);
+      this.event(`Stopped reporting: no new reading for ${stopped.minutesSince} minutes`);
       await this.driver.cards.stopped.trigger(this, { minutes: stopped.minutesSince }).catch(this.error);
     }
     await this.accountEvent(this.health.check(now));
@@ -164,7 +164,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
   async onResources(resources) {
     const live = liveElectricityResource(resources, this.getStoreValue('elec_cons_res'));
     if (live && live !== this.getStoreValue('elec_cons_res')) {
-      this.log('Stored resource is not electricity consumption; switching to the one that is');
+      this.event('The stored resource is not electricity consumption, so switching to the one that is');
       await this.setStoreValue('elec_cons_res', live);
     }
   }
@@ -205,7 +205,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
     if (!day) return;
     this.announcedDay = day.date;
     await this.setStoreValue('announcedDay', day.date).catch(this.error);
-    this.log(`New day's figures for ${day.date}`);
+    this.event(`New day's figures for ${dayLabel(day.date)}: ${day.kWh} kWh, £${day.pounds ?? 0}`);
     await this.driver.cards.newDay.trigger(this, {
       date: dayLabel(day.date), electricity_kwh: day.kWh, electricity_cost: day.pounds ?? 0,
     }).catch(this.error);
@@ -223,6 +223,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       const now = Date.now();
       const answers = await readings.fetchTariffs(now);
       this.tariffResult = { at: now, ...answers };
+      this.tariffEvents('electricity');
       await this.saveReadings();
 
       const electricity = readings.tariffs.electricity && readings.tariffs.electricity.last;
@@ -231,7 +232,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
           const previous = this.getCapabilityValue('tariff');
           await this.setCapabilityValue('tariff', electricity.rate);
           if (previous !== null && previous !== electricity.rate) {
-            this.log(`Tariff changed from ${previous} to ${electricity.rate}`);
+            this.event(`Tariff changed from ${previous} to ${electricity.rate} p/kWh`);
             this.driver.tariffChangedTrigger.trigger(this, { tariff: electricity.rate }).catch(this.error);
           }
         }
@@ -256,7 +257,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
    * onAdded is called when the user adds the device, called just after pairing.
    */
   async onAdded() {
-    this.log('Display and CAD (API) device added');
+    this.log('Electricity meter (cloud) added');
   }
 
   /**
@@ -268,7 +269,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
    * @returns {Promise<string|void>} return a custom message that will be displayed
    */
   async onSettings({ oldSettings, newSettings, changedKeys }) {
-    this.log('Display and CAD (API) settings changed');
+    this.log('Electricity meter (cloud) settings changed');
 
     // if username or password changed, get new token from API and write it to token in device store
     if (changedKeys.includes('username') || changedKeys.includes('password')) await this.applyCredentials(newSettings);
@@ -297,14 +298,14 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
    * @param {string} name The new name
    */
   async onRenamed(name) {
-    this.log('Display and CAD (API) was renamed');
+    this.log('Electricity meter (cloud) was renamed');
   }
 
   /**
    * onDeleted is called when the user deleted the device.
    */
   async onDeleted() {
-    this.log('Display and CAD (API) has been deleted');
+    this.log('Electricity meter (cloud) has been deleted');
     await super.onDeleted();
   }
 }

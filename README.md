@@ -17,7 +17,7 @@ Once you have your device set up and working with the Bright app, you can add it
 
 When you add a cloud device in Homey, you will be asked to enter your Bright app credentials. This is the same username and password you use to connect in your Bright app. The pairing process will then show any 'virtual entities' connected to your account. A virtual entity broadly equates to a single metered supply so generally there should be exactly one of these. Entries that Glowmarkt won't give readings for, or that have no electricity (or gas, for the gas meter), are left out. Add the electricity meter and the gas meter separately; they share the login.
 
-The app's settings page has a Cloud section showing, for each account, when each device last read successfully, the last error, any entries left out at pairing, and when the login next renews. For each device it also shows which of Glowmarkt's copies of each reading it uses, how recent each one's data is, and the last tariff Glowmarkt gave.
+The app's settings page has a Cloud section showing, for each account, when each device last read successfully, the last error, any entries left out at pairing, and when the login next renews. For each device it also shows which of Glowmarkt's copies of each reading it uses, how recent each one's data is, and the last tariff Glowmarkt gave. A list of recent cloud events (logins, errors, each tariff request and the flow cards fired) can be copied from there for a bug report.
 
 Costs come from Glowmarkt, which prices each half hour, and are for energy only, without the standing charge.
 

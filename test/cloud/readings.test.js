@@ -196,6 +196,7 @@ test('a copy that times out is not asked again that day; the copy that answers i
 
   assert.deepEqual(await source.fetch(api.request, RECORDED_AT), { rate: 25.63, standingCharge: 60.7 });
   assert.deepEqual(api.calls.map((c) => c.path), [`/resource/${ELEC}/tariff`, `/resource/${ELEC_SMART}/tariff`]);
+  assert.deepEqual(source.attempts.map((a) => [a.id, a.outcome]), [[ELEC, 'slow'], [ELEC_SMART, 'answered']]);
 
   api.calls.length = 0;
   await source.fetch(api.request, at('2026-10-28T23:00:30Z'));
