@@ -1,0 +1,278 @@
+'use strict';
+
+// The shared readings layer, against the recording of Jon's account on 28 Oct
+// at 13:40: one live entry with two copies of each consumption and cost
+// resource, and one dead entry that returns 401 for everything.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const CloudReadings = require('../../lib/cloud/CloudReadings');
+const ImportToday = require('../../lib/cloud/ImportToday');
+const { TariffSource, parseTariff, nextTariffAt } = require('../../lib/cloud/TariffSource');
+const { selectResources, liveElectricityResource, isDeadEntry } = require('../../lib/cloud/resources');
+const {
+  readingRows, latestCompleteDay, dayTotal, isFinalDay, pounds,
+} = require('../../lib/cloud/readings');
+const { readingsQueries } = require('../../lib/cloud/days');
+const {
+  RECORDED_AT, ENTRIES, ID, recorded, fakeCloudApi,
+} = require('../helpers/fake-cloud-api');
+
+const [LIVE, DEAD] = ENTRIES;
+const ELEC = ID['electricity.consumption|electricity consumption'];
+const ELEC_SMART = ID['electricity.consumption|Smart Meter, electricity consumption'];
+const GAS = ID['gas.consumption|gas consumption'];
+const GAS_SMART = ID['gas.consumption|Smart Meter, gas consumption'];
+const EXPORT = ID['electricity.export|active export'];
+const at = (iso) => Date.parse(iso);
+const lastTime = (id) => recorded('last-time', id).body.data.lastTs * 1000;
+
+async function rowsFor(id, date) {
+  const { request } = fakeCloudApi();
+  const [query] = readingsQueries(date, date);
+  return readingRows(await request(`/resource/${id}/readings?${new URLSearchParams(query)}`));
+}
+
+// Choosing resources
+
+test('duplicate copies resolve to one per classifier: the first listed on a tie, the stored copy if there is one', () => {
+  const times = new Map(LIVE.resources.map((r) => [r.resourceId, lastTime(r.resourceId)]));
+  assert.equal(times.get(ELEC), times.get(ELEC_SMART));
+
+  const selected = selectResources(LIVE.resources, times);
+  assert.equal(selected['electricity.consumption'].resourceId, ELEC);
+  assert.equal(selected['gas.consumption'].resourceId, GAS);
+  assert.equal(Object.keys(selected).length, 7);
+
+  const kept = selectResources(LIVE.resources, times, { 'electricity.consumption': ELEC_SMART });
+  assert.equal(kept['electricity.consumption'].resourceId, ELEC_SMART);
+});
+
+test('a copy with a later /last-time wins over the stored one; with no answers the stored one is kept', () => {
+  const times = new Map(LIVE.resources.map((r) => [r.resourceId, lastTime(r.resourceId)]));
+  times.set(ELEC_SMART, times.get(ELEC) + 60000);
+  assert.equal(selectResources(LIVE.resources, times, { 'electricity.consumption': ELEC })['electricity.consumption'].resourceId, ELEC_SMART);
+
+  const none = new Map(LIVE.resources.map((r) => [r.resourceId, null]));
+  const selected = selectResources(LIVE.resources, none, { 'gas.consumption': GAS_SMART });
+  assert.deepEqual(selected['gas.consumption'], { resourceId: GAS_SMART, lastTime: null });
+  assert.equal(selected['electricity.consumption'].resourceId, ELEC);
+});
+
+test('an existing device keeps its live resource unless it is not electricity.consumption', () => {
+  assert.equal(liveElectricityResource(LIVE.resources, ELEC_SMART), ELEC_SMART);
+  // The old pairing fell back to the first resource listed, which here is gas.
+  assert.equal(liveElectricityResource(LIVE.resources, GAS), ELEC);
+  assert.equal(liveElectricityResource(LIVE.resources, 'gone'), ELEC);
+  assert.equal(liveElectricityResource([], ELEC), null);
+});
+
+test('the dead entry is recognised: every resource refuses', async () => {
+  assert.equal(isDeadEntry([401, 401]), true);
+  assert.equal(isDeadEntry([401, 200]), false);
+  assert.equal(isDeadEntry([401, null]), false);
+  assert.equal(isDeadEntry([]), false);
+
+  const { request } = fakeCloudApi();
+  const dead = new CloudReadings({ request, resources: DEAD.resources });
+  const figures = await dead.refresh(RECORDED_AT);
+  assert.equal(dead.dead, true);
+  assert.deepEqual(figures, {
+    dataUpTo: {
+      'electricity.consumption': null, 'electricity.consumption.cost': null, 'gas.consumption': null, 'gas.consumption.cost': null,
+    },
+    electricityYesterday: null,
+    gasLatestDay: null,
+  });
+
+  const live = new CloudReadings({ request, resources: LIVE.resources });
+  await live.refresh(RECORDED_AT);
+  assert.equal(live.dead, false);
+});
+
+// Days and completeness
+
+test('the latest complete day comes from /last-time', () => {
+  assert.equal(latestCompleteDay(lastTime(GAS)), '2026-10-27');
+  assert.equal(latestCompleteDay(lastTime(ELEC)), '2026-10-27');
+  assert.equal(latestCompleteDay(lastTime(EXPORT)), '2026-10-26');
+  assert.equal(latestCompleteDay(at('2026-10-27T23:29:59Z')), '2026-10-26');
+  assert.equal(latestCompleteDay(at('2026-10-25T23:30:00Z')), '2026-10-25');
+  assert.equal(latestCompleteDay(null), null);
+});
+
+test('a day with no gas used is complete, its zero half hours real', async () => {
+  const day = dayTotal(await rowsFor(GAS, '2026-10-27'), '2026-10-27', lastTime(GAS));
+  assert.deepEqual(day, {
+    date: '2026-10-27', total: 0, halfHours: 48, negative: 0, complete: true,
+  });
+  const gasToday = dayTotal(await rowsFor(GAS, '2026-10-28'), '2026-10-28', lastTime(GAS));
+  assert.equal(gasToday.complete, false);
+  assert.equal(gasToday.halfHours, 0);
+});
+
+test('zero padding after /last-time is not counted', async () => {
+  // Export data ends on 26 Oct, but the API still returns 48 zero rows for 27 Oct.
+  const rows = await rowsFor(EXPORT, '2026-10-27');
+  assert.equal(rows.length, 48);
+  const day = dayTotal(rows, '2026-10-27', lastTime(EXPORT));
+  assert.equal(day.halfHours, 0);
+  assert.equal(day.complete, false);
+});
+
+test('the clock-change day counts all 50 half hours', async () => {
+  const day = dayTotal(await rowsFor(ELEC, '2026-10-25'), '2026-10-25', lastTime(ELEC));
+  assert.equal(day.halfHours, 50);
+  assert.equal(Math.round(day.total * 1000) / 1000, 13.701);
+});
+
+test('today is not final while it holds net half hours from the display', async () => {
+  const today = dayTotal(await rowsFor(ELEC, '2026-10-28'), '2026-10-28', lastTime(ELEC));
+  assert.ok(today.negative > 0);
+  assert.equal(isFinalDay(today), false);
+  assert.equal(isFinalDay(dayTotal(await rowsFor(ELEC, '2026-10-27'), '2026-10-27', lastTime(ELEC))), true);
+});
+
+test('pence become pounds to the penny', () => {
+  assert.equal(pounds(286.953), 2.87);
+  assert.equal(pounds(0), 0);
+  assert.equal(pounds(222.4), 2.22);
+});
+
+// Figures for the device
+
+test('yesterday and the latest gas day, from the readings layer', async () => {
+  const { request } = fakeCloudApi();
+  const readings = new CloudReadings({ request, resources: LIVE.resources });
+  const figures = await readings.refresh(RECORDED_AT);
+  assert.deepEqual(figures.electricityYesterday, {
+    date: '2026-10-27', kWh: 11.196, pounds: 2.87, final: true,
+  });
+  assert.deepEqual(figures.gasLatestDay, { date: '2026-10-27', kWh: 0, pounds: 0 });
+  assert.equal(figures.dataUpTo['electricity.consumption'], at('2026-10-28T13:18:00Z'));
+  assert.equal(figures.dataUpTo['electricity.export'], at('2026-10-26T23:30:00Z'));
+});
+
+test('copies are chosen once a day; later polls ask only the chosen copies for /last-time', async () => {
+  const api = fakeCloudApi();
+  const readings = new CloudReadings({ request: api.request, resources: LIVE.resources });
+  await readings.select(RECORDED_AT);
+  assert.equal(api.calls.filter((c) => c.path.endsWith('/last-time')).length, 9);
+
+  api.calls.length = 0;
+  await readings.select(RECORDED_AT + 15 * 60 * 1000);
+  assert.equal(api.calls.filter((c) => c.path.endsWith('/last-time')).length, 5);
+
+  // The choice survives a restart, and a new day chooses again.
+  const restored = new CloudReadings({ request: api.request, resources: LIVE.resources, state: JSON.parse(JSON.stringify(readings)) });
+  api.calls.length = 0;
+  await restored.select(at('2026-10-29T09:00:00Z'));
+  assert.equal(api.calls.filter((c) => c.path.endsWith('/last-time')).length, 9);
+});
+
+// Tariffs
+
+test('the tariff comes from one response: electricity and gas rates and standing charges', async () => {
+  assert.deepEqual(parseTariff(recorded('tariff', GAS).body), { rate: 7.92, standingCharge: 28.84 });
+  assert.equal(parseTariff({ data: [] }), null);
+
+  const api = fakeCloudApi();
+  const readings = new CloudReadings({ request: api.request, resources: LIVE.resources });
+  assert.deepEqual(await readings.fetchTariffs(RECORDED_AT), {
+    electricity: { rate: 25.63, standingCharge: 60.7 },
+    gas: { rate: 7.92, standingCharge: 28.84 },
+  });
+  assert.deepEqual(api.calls.map((c) => [c.path, c.options.timeoutMs]), [
+    [`/resource/${ELEC}/tariff`, 35000],
+    [`/resource/${GAS}/tariff`, 35000],
+  ]);
+});
+
+test('a copy that times out is not asked again that day; the copy that answers is used', async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  const api = fakeCloudApi({ overrides: { [`tariff ${ELEC}`]: timeout } });
+  const source = new TariffSource({ copies: [ELEC, ELEC_SMART] });
+
+  assert.deepEqual(await source.fetch(api.request, RECORDED_AT), { rate: 25.63, standingCharge: 60.7 });
+  assert.deepEqual(api.calls.map((c) => c.path), [`/resource/${ELEC}/tariff`, `/resource/${ELEC_SMART}/tariff`]);
+
+  api.calls.length = 0;
+  await source.fetch(api.request, at('2026-10-28T23:00:30Z'));
+  assert.deepEqual(api.calls.map((c) => c.path), [`/resource/${ELEC_SMART}/tariff`]);
+
+  // The next day it may be tried again, after the copy that answered.
+  assert.deepEqual(source.candidates(at('2026-10-29T00:00:30Z')), [ELEC_SMART, ELEC]);
+  assert.deepEqual(new TariffSource({ copies: [ELEC, ELEC_SMART], ...JSON.parse(JSON.stringify(source)) }).candidates(RECORDED_AT), [ELEC_SMART]);
+});
+
+test('a copy the server cuts off is treated like a timeout; other failures are not', async () => {
+  const cutOff = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  const source = new TariffSource({ copies: [ELEC, ELEC_SMART] });
+  await source.fetch(fakeCloudApi({ overrides: { [`tariff ${ELEC}`]: cutOff } }).request, RECORDED_AT);
+  assert.deepEqual(source.candidates(RECORDED_AT), [ELEC_SMART]);
+
+  const busy = Object.assign(new Error('HTTP 503'), { status: 503 });
+  const other = new TariffSource({ copies: [ELEC, ELEC_SMART] });
+  await other.fetch(fakeCloudApi({ overrides: { [`tariff ${ELEC}`]: busy } }).request, RECORDED_AT);
+  assert.deepEqual(other.candidates(RECORDED_AT), [ELEC_SMART, ELEC]);
+});
+
+test('the last good tariff is kept when no copy answers; with no answer ever it stays empty', async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  const failing = fakeCloudApi({ overrides: { tariff: timeout } });
+
+  const source = new TariffSource({ copies: [GAS, GAS_SMART] });
+  assert.equal(await source.fetch(failing.request, RECORDED_AT), null);
+  assert.equal(source.last, null);
+  assert.deepEqual(source.candidates(RECORDED_AT), []);
+
+  const answered = new TariffSource({ copies: [GAS, GAS_SMART] });
+  await answered.fetch(fakeCloudApi().request, RECORDED_AT);
+  assert.equal(await answered.fetch(failing.request, at('2026-10-29T08:00:30Z')), null);
+  assert.deepEqual(answered.last, { rate: 7.92, standingCharge: 28.84, at: RECORDED_AT });
+});
+
+test('the tariff is fetched 30 s after each hour and half hour', () => {
+  const next = (iso) => new Date(nextTariffAt(at(iso))).toISOString().slice(11, 19);
+  assert.equal(next('2026-10-28T13:41:10Z'), '14:00:30');
+  assert.equal(next('2026-10-28T14:00:20Z'), '14:00:30');
+  assert.equal(next('2026-10-28T14:00:30Z'), '14:30:30');
+  assert.equal(next('2026-10-28T23:59:00Z'), '00:00:30');
+});
+
+// Electricity today from the import register
+
+test('electricity today is the register now minus the register at midnight', () => {
+  const today = new ImportToday();
+  assert.equal(today.reading(at('2026-10-27T23:59:50Z'), 10_360_000), null);
+  assert.equal(today.reading(at('2026-10-28T00:00:00Z'), 10_360_010), 0);
+  assert.equal(today.reading(at('2026-10-28T13:18:00Z'), 10_365_770), 5.76);
+
+  // It carries on after a restart.
+  const restored = new ImportToday(JSON.parse(JSON.stringify(today)));
+  assert.equal(restored.reading(at('2026-10-28T14:00:00Z'), 10_366_010), 6);
+});
+
+test('without a reading just before midnight, today stays empty until the next midnight', () => {
+  const installed = new ImportToday();
+  assert.equal(installed.reading(at('2026-10-28T13:00:00Z'), 10_365_000), null);
+  assert.equal(installed.reading(at('2026-10-28T23:59:55Z'), 10_368_000), null);
+  assert.equal(installed.reading(at('2026-10-29T00:00:05Z'), 10_368_010), 0);
+
+  // Homey off for an hour across midnight
+  const gap = new ImportToday();
+  gap.reading(at('2026-10-28T23:30:00Z'), 10_368_000);
+  assert.equal(gap.reading(at('2026-10-29T00:30:00Z'), 10_368_300), null);
+});
+
+test('midnight is London midnight, and a register that goes backwards empties today', () => {
+  const summer = new ImportToday();
+  summer.reading(at('2026-07-01T22:59:50Z'), 1_000_000);
+  assert.equal(summer.reading(at('2026-07-01T23:00:00Z'), 1_000_005), 0);
+  assert.equal(summer.date, '2026-07-02');
+
+  assert.equal(summer.reading(at('2026-07-02T08:00:00Z'), 500), null);
+  // An older reading arriving late is ignored.
+  assert.equal(summer.reading(at('2026-07-02T07:00:00Z'), 1_000_100), null);
+});

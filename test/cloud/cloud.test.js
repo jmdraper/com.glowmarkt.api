@@ -219,3 +219,77 @@ test('summarise strips IDs, URLs and bodies from unexpected errors', () => {
   assert.equal(summarise(new Error('request to https://api.glowmarkt.com/x failed')), 'request to');
   assert.equal(summarise(undefined), 'Unknown error');
 });
+
+// Device lifecycle
+
+function startDevice({ pollFrequency } = {}) {
+  resetApi();
+  const driver = makeDriver();
+  const { device, store } = makeDevice(driver);
+  const active = new Map();
+  let nextId = 1;
+  device.homey.setInterval = (fn, ms) => {
+    const id = nextId++;
+    active.set(id, ms);
+    return id;
+  };
+  device.homey.clearInterval = (id) => { active.delete(id); };
+  const settings = { username: USERNAME, password: 'pw', pollFrequency };
+  Object.assign(device, {
+    getSettings: () => settings,
+    hasCapability: () => true,
+    getCapabilityValue: () => null,
+    setCapabilityValue: async () => {},
+    setAvailable: async () => {},
+  });
+  let inits = 0;
+  const onInit = device.onInit.bind(device);
+  device.onInit = async () => {
+    inits++;
+    return onInit();
+  };
+  return {
+    device, store, active, inits: () => inits,
+  };
+}
+
+test('changing the poll frequency restarts polling without running setup again', async () => {
+  const { device, active, inits } = startDevice({ pollFrequency: 10 });
+  await device.onInit();
+  assert.deepEqual([...active.values()], [10000, 60000]);
+  const before = [...active.keys()];
+
+  await device.onSettings({ oldSettings: {}, newSettings: { pollFrequency: 30 }, changedKeys: ['pollFrequency'] });
+  assert.equal(inits(), 1);
+  assert.deepEqual([...active.values()], [30000, 60000]);
+  assert.ok(before.every((id) => !active.has(id)), 'old timers still running');
+});
+
+test('new login details restart polling with the new token', async () => {
+  const { device, store, active } = startDevice();
+  await device.onInit();
+  store.token = 'old-token';
+  await device.onSettings({ oldSettings: {}, newSettings: { username: USERNAME, password: 'new' }, changedKeys: ['password'] });
+  assert.equal(store.token, FRESH_TOKEN);
+  assert.equal(active.size, 2);
+});
+
+test('settings polling does not depend on leave it running', async () => {
+  const { device, active } = startDevice();
+  await device.onInit();
+  const before = [...active.keys()];
+  await device.onSettings({ oldSettings: {}, newSettings: {}, changedKeys: ['stale_after'] });
+  assert.deepEqual([...active.keys()], before);
+});
+
+test('every timer stops when the app stops or the device is deleted', async () => {
+  const stopped = startDevice();
+  await stopped.device.onInit();
+  await stopped.device.onUninit();
+  assert.equal(stopped.active.size, 0);
+
+  const deleted = startDevice();
+  await deleted.device.onInit();
+  await deleted.device.onDeleted();
+  assert.equal(deleted.active.size, 0);
+});

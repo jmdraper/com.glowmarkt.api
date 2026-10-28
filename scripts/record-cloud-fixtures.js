@@ -44,12 +44,13 @@ const fetch = require('node-fetch');
 
 const { BRIGHT_APP_ID, authenticate } = require('../lib/cloud/glowmarkt');
 const { formatRecording, maskRecording, describeMasking } = require('./cloud-recording');
+const {
+  DAY_MS, londonOffset, londonDate, londonDateTime: londonString, addDays, londonMidnight, utcString,
+} = require('../lib/cloud/days');
 
 const BASE_URL = 'https://api.glowmarkt.com/api/v0-1';
 const TIMEOUT_MS = 35 * 1000;
 const CURRENT_EVERY_MS = 10 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 const OUT_DIR = path.join(__dirname, '..', 'test', 'fixtures', 'raw', 'cloud');
 
 const tail = (id) => (id && String(id).length > 4 ? `…${String(id).slice(-4)}` : String(id));
@@ -134,36 +135,6 @@ function runFolder(ms) {
 }
 
 // London time ---------------------------------------------------------------
-
-const londonParts = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Europe/London', hourCycle: 'h23',
-  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-});
-
-/** London's offset from UTC at an instant, in minutes: 60 in summer, 0 in winter. */
-function londonOffset(ms) {
-  const p = Object.fromEntries(londonParts.formatToParts(new Date(ms)).map(({ type, value }) => [type, value]));
-  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  return Math.round((asUtc - Math.floor(ms / 1000) * 1000) / 60000);
-}
-
-/** The London date ('YYYY-MM-DD') at an instant. */
-function londonDate(ms) {
-  return new Date(ms + londonOffset(ms) * 60000).toISOString().slice(0, 10);
-}
-
-/**
- * The instant London's day starts. Clocks change at 01:00 UTC, so the offset at
- * 00:00 UTC is the offset at local midnight.
- */
-function londonMidnight(date) {
-  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
-  return utcMidnight - londonOffset(utcMidnight) * 60000;
-}
-
-const addDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
-const utcString = (ms) => new Date(ms).toISOString().slice(0, 19);
-const londonString = (ms) => new Date(ms + londonOffset(ms) * 60000).toISOString().slice(0, 16).replace('T', ' ');
 
 /** The latest London day before `today` that isn't 24 hours long. */
 function latestClockChange(today) {
