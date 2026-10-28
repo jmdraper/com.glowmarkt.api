@@ -1,7 +1,7 @@
 {
   "type": "string",
   "title": {
-    "en": "Gas latest complete day"
+    "en": "Latest complete day"
   },
   "uiComponent": "sensor",
   "getable": true,

@@ -378,8 +378,8 @@
           const list = el('ul', null, 'glow-skipped');
           for (const entry of account.skipped) {
             const reason = t(`settings.skipReason.${entry.reason.code}`, { status: entry.reason.status, message: entry.reason.message });
-            const kind = entry.kind ? ` (${t(`settings.kind.${entry.kind}`)})` : '';
-            list.appendChild(el('li', `${entry.name}${kind}: ${reason} (${formatTime(entry.at)})`));
+            const kind = entry.kind ? `${t(`settings.kind.${entry.kind}`)}, ` : '';
+            list.appendChild(el('li', `${kind}${entry.name}: ${reason} (${formatTime(entry.at)})`));
           }
           box.appendChild(list);
         }

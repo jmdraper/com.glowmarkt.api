@@ -51,7 +51,7 @@ Glowmarkt receives gas from your meter's data service in whole days, a day or mo
 
 It shows:
 
-* **Gas, latest complete day**, with its date and cost.
+* **Latest complete day**: its date, the gas used and its cost.
 * **Tariff** and **Standing charge**, from your gas tariff in Glowmarkt. If Glowmarkt never gives a gas tariff for your meter, you can enter the standing charge in the device's settings.
 * **Data up to:** the end of the latest half hour Glowmarkt has gas for.
 

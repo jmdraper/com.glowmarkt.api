@@ -1,7 +1,7 @@
 {
   "type": "number",
   "title": {
-    "en": "Gas cost, latest complete day"
+    "en": "Latest complete day"
   },
   "uiComponent": "sensor",
   "getable": true,

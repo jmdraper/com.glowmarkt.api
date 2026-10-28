@@ -1239,7 +1239,7 @@
     "gas_day": {
       "type": "string",
       "title": {
-        "en": "Gas latest complete day"
+        "en": "Latest complete day"
       },
       "uiComponent": "sensor",
       "getable": true,
@@ -1250,7 +1250,7 @@
     "gas_day_cost": {
       "type": "number",
       "title": {
-        "en": "Gas cost, latest complete day"
+        "en": "Latest complete day"
       },
       "uiComponent": "sensor",
       "getable": true,
@@ -1265,7 +1265,7 @@
     "gas_day_energy": {
       "type": "number",
       "title": {
-        "en": "Gas, latest complete day"
+        "en": "Latest complete day"
       },
       "uiComponent": "sensor",
       "getable": true,
