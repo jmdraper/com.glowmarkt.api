@@ -7,12 +7,19 @@
 //   node scripts/record-cloud-fixtures.js --current 20    /current only, every 10 s for 20 minutes
 //   node scripts/record-cloud-fixtures.js --share         full recording, masked, to send to Jon
 //
-// Asks for the Bright app login. The password and token are never stored,
+// Asks for the Bright app login, unless GLOW_USERNAME and GLOW_PASSWORD are
+// set, so it can run unattended. The login and token are never stored,
 // printed or written to a file. Only GET requests follow the login, and never
-// /catchup, which asks Hildebrand to fetch data again. Writes
-// test/fixtures/raw/cloud/<name>-<time>.json (gitignored), one entry per call
+// /catchup, which asks Hildebrand to fetch data again. Each run writes a new
+// folder named with its London time, test/fixtures/raw/cloud/2026-10-28T2300/
+// (gitignored), holding account.json (or current.json): one entry per call
 // with its status, time taken and body. Run scripts/make-fixtures.js on that
 // file to get a fixture that's safe to commit.
+//
+// Exits with code 1 if logging in or any call fails: no response, a timeout,
+// an error body or a status other than 2xx. The 401s from an entry where every
+// call returns 401 (a dead entry, which pairing skips too) don't count. The
+// recording is written either way.
 //
 // With --share, it writes only glowmarkt-share-<time>.json in the current
 // folder instead, with every identifier replaced by a stand-in as
@@ -98,6 +105,32 @@ async function get(token, label, apiPath, query) {
   call.at = new Date(started).toISOString();
   calls.push(call);
   return call;
+}
+
+/**
+ * Calls that failed: no response, an error body or a status other than 2xx,
+ * leaving out the 401s of an entry where every call returns 401.
+ */
+function failedCalls() {
+  const entryOf = new Map();
+  for (const call of calls) {
+    const veId = call.label === 'resources' ? call.path.split('/')[2] : null;
+    for (const resource of veId ? call.body?.resources || [] : []) entryOf.set(resource.resourceId, veId);
+  }
+  const entryOfCall = (call) => entryOf.get(call.path.match(/^\/resource\/([^/]+)\//)?.[1]);
+  const dead = new Set([...new Set(entryOf.values())].filter((veId) => calls.every((call) => entryOfCall(call) !== veId || call.status === 401)));
+  return calls.filter((call) => {
+    if (call.status === 401 && dead.has(entryOfCall(call))) return false;
+    return !(call.status >= 200 && call.status < 300) || Boolean(call.body?.error);
+  });
+}
+
+/** A new folder for this run, named with its London time, e.g. 2026-10-28T2300. */
+function runFolder(ms) {
+  const base = path.join(OUT_DIR, new Date(ms + londonOffset(ms) * 60000).toISOString().slice(0, 16).replace(':', ''));
+  let folder = base;
+  for (let n = 2; fs.existsSync(folder); n++) folder = `${base}-${n}`;
+  return folder;
 }
 
 // London time ---------------------------------------------------------------
@@ -278,19 +311,24 @@ async function main() {
   const currentMinutes = currentIndex >= 0 ? Number(args[currentIndex + 1]) : null;
   if ((currentIndex >= 0 && !(currentMinutes > 0)) || (share && currentMinutes)) {
     console.error('Usage: node scripts/record-cloud-fixtures.js [--current <minutes> | --share]');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
-  const username = process.env.GLOWMARKT_USERNAME || (await ask('Bright app username (email): ')).trim();
-  const token = await authenticate(username, await ask('Password (not shown): ', { hidden: true }));
+  const username = process.env.GLOW_USERNAME || (await ask('Bright app username (email): ')).trim();
+  const password = process.env.GLOW_PASSWORD || await ask('Password (not shown): ', { hidden: true });
+  const token = await authenticate(username, password).catch((error) => {
+    console.error(`Login failed: ${error.code || error.name}`);
+    return null;
+  });
   if (!token) {
     console.error('Login failed.');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   console.log('Logged in.');
 
   const now = Date.now();
-  const stamp = utcString(now).replace(/[-:]/g, '').replace('T', '-');
   let meta = {};
   try {
     if (currentMinutes) await recordCurrent(token, currentMinutes);
@@ -302,14 +340,16 @@ async function main() {
     if (share) {
       const result = maskRecording(recording);
       if (result.leaks.length) throw new Error(`Not written: ${result.leaks.length} replaced values still appear in the masked file.`);
-      file = path.resolve(`glowmarkt-share-${stamp}.json`);
+      file = path.resolve(`glowmarkt-share-${utcString(now).replace(/[-:]/g, '').replace('T', '-')}.json`);
       text = result.text;
       console.log(`\n${describeMasking(result).join('\n')}`);
     } else {
-      file = path.join(OUT_DIR, `${currentMinutes ? 'current' : 'account'}-${stamp}.json`);
+      file = path.join(runFolder(now), `${currentMinutes ? 'current' : 'account'}.json`);
       text = formatRecording(recording);
     }
-    if (text.includes(token)) throw new Error('Not written: the token appears in the recording.');
+    if (text.includes(token) || (username && text.includes(username)) || (password.length >= 6 && text.includes(password))) {
+      throw new Error('Not written: the login or token appears in the recording.');
+    }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text);
     console.log(`\nWrote ${calls.length} calls to ${path.relative(process.cwd(), file) || file}`);
@@ -324,12 +364,22 @@ async function main() {
     }
     printSummary(classifiers);
   }
+
+  const failed = failedCalls();
+  if (failed.length) {
+    console.error(`\n${failed.length} of ${calls.length} calls failed:`);
+    for (const call of failed) {
+      const where = call.path.replace(/[0-9a-f-]{32,}/gi, (id) => tail(id));
+      console.error(`  ${call.label} ${where}: ${call.error || `HTTP ${call.status}`}${call.body?.error ? ' (error body)' : ''}`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 if (require.main === module) {
   main().catch((error) => {
     console.error(error.message);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }
 
