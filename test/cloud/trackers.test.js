@@ -25,6 +25,38 @@ test('exporting is held for a minute either way, and a blip resets the clock', (
   assert.equal(tracker.power(Number.NaN, t0 + 400000), null);
 });
 
+test('power hovering just below zero (-5 to -25 W) for half an hour fires nothing', () => {
+  const tracker = new ExportingTracker();
+  const t0 = at('2026-10-29T18:13:00Z');
+  const hover = [-5, -21, -12, -25, -8, -17, -5, -23];
+  for (let i = 0; i < 180; i += 1) {
+    assert.equal(tracker.power(hover[i % hover.length], t0 + i * 10000), null, `reading ${i}`);
+  }
+  assert.equal(tracker.exporting, false);
+});
+
+test('exporting starts only below -50 W, and stops only at 0 W or above', () => {
+  const tracker = new ExportingTracker();
+  const t0 = at('2026-10-29T16:00:00Z');
+  // -50 W exactly isn't exporting, so it doesn't start the hold.
+  assert.equal(tracker.power(-50, t0), null);
+  assert.equal(tracker.power(-50, t0 + 2 * MINUTE), null);
+  assert.equal(tracker.power(-51, t0 + 3 * MINUTE), null);
+  // A reading between -50 and 0 W restarts the hold.
+  assert.equal(tracker.power(-30, t0 + 3.5 * MINUTE), null);
+  assert.equal(tracker.power(-60, t0 + 4 * MINUTE), null);
+  assert.deepEqual(tracker.power(-60, t0 + 5 * MINUTE), { event: 'started', power: -60 });
+
+  // Once exporting, a small export keeps it going, and any negative reading
+  // restarts the hold towards stopping.
+  assert.equal(tracker.power(-5, t0 + 10 * MINUTE), null);
+  assert.equal(tracker.power(-5, t0 + 20 * MINUTE), null);
+  assert.equal(tracker.power(0, t0 + 21 * MINUTE), null);
+  assert.equal(tracker.power(-1, t0 + 21.5 * MINUTE), null);
+  assert.equal(tracker.power(0, t0 + 22 * MINUTE), null);
+  assert.deepEqual(tracker.power(0, t0 + 23 * MINUTE), { event: 'stopped', power: 0 });
+});
+
 test('a restart keeps the exporting state, so nothing is announced twice', () => {
   const tracker = new ExportingTracker(JSON.parse(JSON.stringify(new ExportingTracker({ exporting: true }))));
   const t0 = at('2026-10-28T16:00:00Z');
