@@ -16,7 +16,7 @@ const {
 } = require('../../lib/cloud/readings');
 const { HALF_HOUR_MS, dayBounds, readingsQueries } = require('../../lib/cloud/days');
 const {
-  RECORDED_AT, ENTRIES, ID, recorded, fakeCloudApi,
+  RECORDED_AT, ENTRIES, ID, recorded, fakeCloudApi, recordingApi,
 } = require('../helpers/fake-cloud-api');
 
 const [LIVE, DEAD] = ENTRIES;
@@ -152,6 +152,28 @@ test('a complete day of display half hours without export is not final', () => {
   assert.deepEqual([display.complete, display.negative, display.fractional], [true, 0, 48]);
   assert.equal(isFinalDay(display), false);
   assert.equal(isFinalDay(dayTotal(rows(0.119), '2026-10-28', lastHalfHour)), true);
+});
+
+test("28 Oct's display half hours give way to the meter's between 06:30 and 15:00 the next day", async () => {
+  const yesterdayAt = async (name) => {
+    const api = recordingApi(name);
+    const readings = new CloudReadings({ request: api.fakeCloudApi().request, resources: api.ENTRIES[0].resources });
+    const elec = api.ID['electricity.consumption|electricity consumption'];
+    const rows = readingRows(api.recorded('readings:recent', elec).body);
+    const lastTs = api.recorded('last-time', elec).body.data.lastTs * 1000;
+    return { day: dayTotal(rows, '2026-10-28', lastTs), figures: await readings.refresh(api.RECORDED_AT) };
+  };
+
+  const early = await yesterdayAt('display-account-29oct-0630');
+  assert.deepEqual([early.day.complete, early.day.negative, early.day.fractional], [true, 16, 45]);
+  assert.equal(early.figures.electricityYesterday.date, '2026-10-28');
+  assert.equal(early.figures.electricityYesterday.kWh, 4.681);
+  assert.equal(early.figures.electricityYesterday.final, false);
+
+  const later = await yesterdayAt('display-account-29oct-1500');
+  assert.deepEqual([later.day.complete, later.day.negative, later.day.fractional], [true, 0, 0]);
+  assert.equal(later.figures.electricityYesterday.kWh, 14.114);
+  assert.equal(later.figures.electricityYesterday.final, true);
 });
 
 test('pence become pounds to the penny', () => {

@@ -12,8 +12,9 @@
 
 const { BRIGHT_APP_ID } = require('../lib/cloud/glowmarkt');
 
-// Keys whose values say who or where someone is, whatever they look like.
-const PRIVATE_KEY = /mpan|mprn|serial|mac|eui|hardware|deviceid|meterid|address|street|town|city|county|region|locality|district|house|building|premise|postal|postcode|owner|user|email|phone|firstname|lastname|surname|^(lat|lon|lng|latitude|longitude)$/i;
+// Keys whose values say who or where someone is, whatever they look like, and
+// record IDs such as a tariff's, which are numbers.
+const PRIVATE_KEY = /^_?id$|mpan|mprn|serial|mac|eui|hardware|deviceid|meterid|address|street|town|city|county|region|locality|district|house|building|premise|postal|postcode|owner|user|email|phone|firstname|lastname|surname|^(lat|lon|lng|latitude|longitude)$/i;
 
 // UUIDs, email addresses, UK postcodes, and runs of 12+ hex characters or 8+ digits.
 const IDENTIFIER = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|\b[0-9a-f]{12,}\b|\b\d{8,}\b/gi;
