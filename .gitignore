@@ -1,6 +1,7 @@
 /env.json
 /node_modules/
 /.homeybuild/
-/docs/
+/docs/*
+!/docs/README.md
 .DS_Store
 /test/fixtures/raw/
