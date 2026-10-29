@@ -105,6 +105,8 @@
     "debugHint": "The last 50 messages from the display's local MQTT feed, newest first. MPAN, MPRN, EUI and supplier are masked to their last four characters. Cloud devices list their own events in the Cloud section.",
     "copy": "Copy",
     "copied": "Copied",
+    "copyManually": "Press ⌘C (or Ctrl+C) to copy.",
+    "close": "Close",
     "debugEmpty": "No messages yet.",
     "invalid": {
       "port": "Choose a port from 1024 to 65535.",

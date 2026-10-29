@@ -28,11 +28,19 @@
     .glow-buttons { display: flex; gap: 8px; margin-top: 12px; }
     .glow-subheading { font-size: 1.05em; margin: 20px 0 4px; }
     .glow-skipped { margin: 6px 0 0; padding-left: 18px; font-size: 0.9em; }
+    .glow-manual-copy[hidden] { display: none; }
+    .glow-manual-copy textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
   </style>
 </head>
 <body>
   <h1 class="homey-title" data-i18n="settings.title"></h1>
   <p class="homey-subtitle" data-i18n="settings.intro"></p>
+
+  <fieldset class="homey-form-fieldset glow-manual-copy" id="manual-copy" hidden>
+    <p data-i18n="settings.copyManually"></p>
+    <textarea class="homey-form-input" id="manual-copy-text" rows="8" readonly></textarea>
+    <button class="homey-button-secondary-small" id="manual-copy-close" type="button" data-i18n="settings.close"></button>
+  </fieldset>
 
   <fieldset class="homey-form-fieldset">
     <legend class="homey-form-legend" data-i18n="settings.brokerTitle"></legend>
@@ -415,18 +423,79 @@
       box.appendChild(list);
     }
 
-    async function copyText(text, button) {
+    // Copies text for a Copy button. Homey shows this page embedded, where the
+    // Clipboard API can be blocked, so this tries it, then a hidden textarea
+    // with execCommand('copy'), and if both fail shows the text selected for
+    // copying by hand. The button says Copied only after a copy worked, and the
+    // console says which method worked, or why each failed.
+    function copyText(text, button) {
+      const done = (copied) => {
+        if (!copied) {
+          showForManualCopy(text);
+          return;
+        }
+        button.textContent = t('settings.copied');
+        setTimeout(() => { button.textContent = t('settings.copy'); }, 1500);
+      };
+      // Where the API plainly can't work, go straight to the textarea, while
+      // the click still counts as the user's action.
+      const unavailable = clipboardApiUnavailable();
+      if (unavailable) {
+        console.warn(`Copy: Clipboard API not tried: ${unavailable}`);
+        done(copyWithTextarea(text));
+        return;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        console.info('Copy: copied with navigator.clipboard.writeText');
+        done(true);
+      }, (error) => {
+        console.warn(`Copy: navigator.clipboard.writeText failed: ${error && error.name}: ${error && error.message}`);
+        done(copyWithTextarea(text));
+      });
+    }
+
+    function clipboardApiUnavailable() {
+      if (!window.isSecureContext) return 'not a secure context';
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') return 'navigator.clipboard.writeText is missing';
+      const policy = document.permissionsPolicy || document.featurePolicy;
+      if (policy && typeof policy.allowsFeature === 'function' && !policy.allowsFeature('clipboard-write')) {
+        return 'blocked by the permissions policy (clipboard-write)';
+      }
+      return null;
+    }
+
+    function copyWithTextarea(text) {
+      const area = el('textarea', text);
+      area.setAttribute('readonly', '');
+      area.style.cssText = 'position: fixed; top: 0; left: -9999px; opacity: 0;';
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, text.length);
       try {
-        await navigator.clipboard.writeText(text);
+        const copied = document.execCommand('copy');
+        if (copied) console.info("Copy: copied with document.execCommand('copy')");
+        else console.warn("Copy: document.execCommand('copy') returned false");
+        return copied;
       } catch (error) {
-        const area = el('textarea', text);
-        document.body.appendChild(area);
-        area.select();
-        document.execCommand('copy');
+        console.warn(`Copy: document.execCommand('copy') threw ${error && error.name}: ${error && error.message}`);
+        return false;
+      } finally {
         area.remove();
       }
-      button.textContent = t('settings.copied');
-      setTimeout(() => { button.textContent = t('settings.copy'); }, 1500);
+    }
+
+    // Outside the sections that redraw every poll, so it stays until closed.
+    function showForManualCopy(text) {
+      console.warn('Copy: both methods failed; showing the text to copy by hand');
+      const panel = $('manual-copy');
+      const area = $('manual-copy-text');
+      area.value = text;
+      panel.hidden = false;
+      panel.scrollIntoView({ block: 'start' });
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, text.length);
     }
 
     // Which copy of each resource a device reads, how recent its data is, and
@@ -570,6 +639,7 @@
       $('start').addEventListener('click', () => startOrStop('/start'));
       $('stop').addEventListener('click', () => startOrStop('/stop'));
       $('copy').addEventListener('click', () => copyText(logAsText(), $('copy')));
+      $('manual-copy-close').addEventListener('click', () => { $('manual-copy').hidden = true; });
 
       homey.get('mqtt', (error, stored) => {
         saved = { ...DEFAULTS, ...(stored || {}) };
