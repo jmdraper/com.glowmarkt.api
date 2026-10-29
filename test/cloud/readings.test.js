@@ -14,7 +14,7 @@ const { selectResources, liveElectricityResource, isDeadEntry } = require('../..
 const {
   readingRows, latestCompleteDay, dayTotal, isFinalDay, pounds,
 } = require('../../lib/cloud/readings');
-const { readingsQueries } = require('../../lib/cloud/days');
+const { HALF_HOUR_MS, dayBounds, readingsQueries } = require('../../lib/cloud/days');
 const {
   RECORDED_AT, ENTRIES, ID, recorded, fakeCloudApi,
 } = require('../helpers/fake-cloud-api');
@@ -105,7 +105,7 @@ test('the latest complete day comes from /last-time', () => {
 test('a day with no gas used is complete, its zero half hours real', async () => {
   const day = dayTotal(await rowsFor(GAS, '2026-10-27'), '2026-10-27', lastTime(GAS));
   assert.deepEqual(day, {
-    date: '2026-10-27', total: 0, halfHours: 48, negative: 0, complete: true,
+    date: '2026-10-27', total: 0, halfHours: 48, negative: 0, fractional: 0, complete: true,
   });
   const gasToday = dayTotal(await rowsFor(GAS, '2026-10-28'), '2026-10-28', lastTime(GAS));
   assert.equal(gasToday.complete, false);
@@ -131,7 +131,27 @@ test('today is not final while it holds net half hours from the display', async 
   const today = dayTotal(await rowsFor(ELEC, '2026-10-28'), '2026-10-28', lastTime(ELEC));
   assert.ok(today.negative > 0);
   assert.equal(isFinalDay(today), false);
-  assert.equal(isFinalDay(dayTotal(await rowsFor(ELEC, '2026-10-27'), '2026-10-27', lastTime(ELEC))), true);
+  const yesterday = dayTotal(await rowsFor(ELEC, '2026-10-27'), '2026-10-27', lastTime(ELEC));
+  assert.equal(yesterday.fractional, 0);
+  assert.equal(isFinalDay(yesterday), true);
+});
+
+test("the display's half hours aren't whole Wh, with or without export", async () => {
+  // 28 Oct before the sun was up: display half hours, none negative
+  const morning = dayTotal(await rowsFor(ELEC, '2026-10-28'), '2026-10-28', at('2026-10-28T08:00:00Z'));
+  assert.equal(morning.halfHours, 17);
+  assert.equal(morning.negative, 0);
+  assert.equal(morning.fractional, 15);
+});
+
+test('a complete day of display half hours without export is not final', () => {
+  const { start } = dayBounds('2026-10-28');
+  const rows = (value) => Array.from({ length: 48 }, (_, i) => [start + i * HALF_HOUR_MS, value]);
+  const lastHalfHour = start + 47 * HALF_HOUR_MS;
+  const display = dayTotal(rows(0.117216666666667), '2026-10-28', lastHalfHour);
+  assert.deepEqual([display.complete, display.negative, display.fractional], [true, 0, 48]);
+  assert.equal(isFinalDay(display), false);
+  assert.equal(isFinalDay(dayTotal(rows(0.119), '2026-10-28', lastHalfHour)), true);
 });
 
 test('pence become pounds to the penny', () => {
