@@ -12,7 +12,7 @@ const ImportToday = require('../../lib/cloud/ImportToday');
 const { TariffSource, parseTariff, nextTariffAt } = require('../../lib/cloud/TariffSource');
 const { selectResources, liveElectricityResource, isDeadEntry } = require('../../lib/cloud/resources');
 const {
-  readingRows, latestCompleteDay, dayTotal, isFinalDay, pounds,
+  readingRows, latestCompleteDay, dayTotal, isFinalDay, gasDayFinality, GAS_SETTLED_MS, pounds,
 } = require('../../lib/cloud/readings');
 const { HALF_HOUR_MS, dayBounds, readingsQueries } = require('../../lib/cloud/days');
 const {
@@ -105,7 +105,7 @@ test('the latest complete day comes from /last-time', () => {
 test('a day with no gas used is complete, its zero half hours real', async () => {
   const day = dayTotal(await rowsFor(GAS, '2026-10-27'), '2026-10-27', lastTime(GAS));
   assert.deepEqual(day, {
-    date: '2026-10-27', total: 0, halfHours: 48, negative: 0, fractional: 0, complete: true,
+    date: '2026-10-27', total: 0, halfHours: 48, negative: 0, fractional: 0, last: 0, complete: true,
   });
   const gasToday = dayTotal(await rowsFor(GAS, '2026-10-28'), '2026-10-28', lastTime(GAS));
   assert.equal(gasToday.complete, false);
@@ -191,9 +191,71 @@ test('yesterday and the latest gas day, from the readings layer', async () => {
   assert.deepEqual(figures.electricityYesterday, {
     date: '2026-10-27', kWh: 11.196, pounds: 2.87, final: true,
   });
-  assert.deepEqual(figures.gasLatestDay, { date: '2026-10-27', kWh: 0, pounds: 0 });
+  // gas runs to 27 Oct 23:30 exactly: 27 Oct isn't final until a poll an hour later
+  assert.deepEqual(figures.gasLatestDay, { date: '2026-10-26', kWh: 6.84, pounds: 0.54 });
   assert.equal(figures.dataUpTo['electricity.consumption'], at('2026-10-28T13:18:00Z'));
   assert.equal(figures.dataUpTo['electricity.export'], at('2026-10-26T23:30:00Z'));
+});
+
+// Gas days
+
+const HOUR = 60 * 60 * 1000;
+const gasOnly = (overrides) => new CloudReadings({ request: fakeCloudApi({ overrides }).request, resources: LIVE.resources, commodity: 'gas' });
+const gasUpTo = (iso) => {
+  const body = { data: { lastTs: at(iso) / 1000 } };
+  return { [`last-time ${GAS}`]: body, [`last-time ${GAS_SMART}`]: body };
+};
+
+test("a gas day is final at once when the data runs past it, as on Jon's account by 29 Oct", async () => {
+  const api = recordingApi('display-account-29oct-0630');
+  const readings = new CloudReadings({ request: api.fakeCloudApi().request, resources: api.ENTRIES[0].resources, commodity: 'gas' });
+  const { dataUpTo, gasLatestDay } = await readings.refresh(api.RECORDED_AT);
+  assert.equal(dataUpTo['gas.consumption'], at('2026-10-29T06:30:00Z'));
+  assert.deepEqual(gasLatestDay, { date: '2026-10-28', kWh: 0, pounds: 0 });
+});
+
+test('a gas day the data ends with is final once its last half hour is unchanged an hour later', async () => {
+  const readings = gasOnly({});
+  assert.equal((await readings.refresh(RECORDED_AT)).gasLatestDay.date, '2026-10-26');
+  assert.equal((await readings.refresh(RECORDED_AT + 30 * 60 * 1000)).gasLatestDay.date, '2026-10-26');
+
+  // what was seen survives a restart
+  const restarted = new CloudReadings({
+    request: fakeCloudApi().request, resources: LIVE.resources, commodity: 'gas', state: readings.toJSON(),
+  });
+  assert.deepEqual(restarted.toJSON().gasSeen, { date: '2026-10-27', last: 0, at: RECORDED_AT });
+  assert.deepEqual((await restarted.refresh(RECORDED_AT + HOUR)).gasLatestDay, { date: '2026-10-27', kWh: 0, pounds: 0 });
+});
+
+test('a gas day is not final between 23:30 and midnight while its data comes through the day', async () => {
+  // gas in to 27 Oct 23:30, polled at 23:45 while that half hour may still be filling
+  const readings = gasOnly(gasUpTo('2026-10-27T23:30:00Z'));
+  assert.equal((await readings.refresh(at('2026-10-27T23:45:00Z'))).gasLatestDay.date, '2026-10-26');
+  assert.equal(readings.toJSON().gasSeen, null);
+
+  // an hour later the data runs past midnight
+  const next = gasOnly(gasUpTo('2026-10-28T00:30:00Z'));
+  assert.equal((await next.refresh(at('2026-10-28T00:45:00Z'))).gasLatestDay.date, '2026-10-27');
+});
+
+test("a gas day's last half hour changing starts the hour again", () => {
+  const { start, end } = dayBounds('2026-10-27');
+  const day = (last) => dayTotal(Array.from({ length: 48 }, (_, i) => [start + i * HALF_HOUR_MS, i === 47 ? last : 0]), '2026-10-27', end - HALF_HOUR_MS);
+  const lastTime = end - HALF_HOUR_MS;
+
+  let poll = gasDayFinality(day(0), lastTime, end + 5 * 60 * 1000, null);
+  assert.deepEqual(poll, { final: false, seen: { date: '2026-10-27', last: 0, at: end + 5 * 60 * 1000 } });
+  poll = gasDayFinality(day(0.321), lastTime, end + 65 * 60 * 1000, poll.seen);
+  assert.equal(poll.final, false);
+  assert.equal(poll.seen.at, end + 65 * 60 * 1000);
+  assert.equal(gasDayFinality(day(0.321), lastTime, end + 125 * 60 * 1000, poll.seen).final, true);
+  assert.equal(GAS_SETTLED_MS, 59 * 60 * 1000);
+});
+
+test('a gas day missing a half hour is not final, even with data past it', () => {
+  const { start, end } = dayBounds('2026-10-27');
+  const rows = Array.from({ length: 48 }, (_, i) => [start + i * HALF_HOUR_MS, 0]).filter((_, i) => i !== 20);
+  assert.equal(gasDayFinality(dayTotal(rows, '2026-10-27', end + HOUR), end + HOUR, end + 2 * HOUR, null).final, false);
 });
 
 test('copies are chosen once a day; later polls ask only the chosen copies for /last-time', async () => {

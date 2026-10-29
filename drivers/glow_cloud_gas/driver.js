@@ -21,8 +21,8 @@ class GlowCloudGasDriver extends CloudDriver {
 
   /**
    * Returns a pairing entry for a virtual entity with gas that Glowmarkt has
-   * data for, or { skipped: reason }. /current isn't needed: gas comes in
-   * whole days, with or without a display.
+   * data for, or { skipped: reason }. /current isn't needed: the device shows
+   * whole days only, with or without a display.
    */
   async entryToDevice(virtualEntity, resources, token, settings) {
     const copies = copiesOf(resources, 'gas.consumption');

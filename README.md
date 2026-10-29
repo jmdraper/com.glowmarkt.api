@@ -47,7 +47,7 @@ Flow cards:
 
 ### Gas meter (cloud)
 
-Glowmarkt receives gas from your meter's data service in whole days, a day or more late, whether or not you have a display. So this device shows the latest complete day rather than anything live, and it can't feed Homey Energy. For live gas, use the local gas meter with a Glow display.
+Glowmarkt receives gas in whole days, a day or more late, on some accounts, and through the day on others. So this device shows the latest complete day once its figures have stopped changing, rather than anything live, and it can't feed Homey Energy. For live gas, use the local gas meter with a Glow display.
 
 It shows:
 

@@ -5,16 +5,18 @@ const { apiError } = require('../../lib/cloud/glowmarkt');
 const { gasDaysToAnnounce } = require('../../lib/cloud/newDay');
 const { DAY_MS, dayLabel, dateTimeLabel } = require('../../lib/cloud/days');
 
-// Gas comes in whole days, so hourly is plenty.
+// Gas is shown a day at a time, so hourly is plenty.
 const READINGS_EVERY_MS = 60 * 60 * 1000;
 // "data up to" older than this is late
 const LATE_AFTER_DAYS = 3;
 
 /**
- * Gas from the Glowmarkt cloud: the latest complete day with its cost, the
- * tariff, and a card for each day as it arrives. Gas reaches Glowmarkt from
- * the DCC in whole days, a day or more late, with or without a display, so
- * there's nothing live and nothing for Homey Energy.
+ * Gas from the Glowmarkt cloud: the latest final day with its cost, the
+ * tariff, and a card for each day as it arrives. Gas reaches Glowmarkt in
+ * whole days a day or more late on some accounts and through the day on
+ * others (Jon's, from 29 Oct), so the device works in final days only (see
+ * gasDayFinality() in lib/cloud/readings.js): nothing live and nothing for
+ * Homey Energy.
  */
 class GlowCloudGasDevice extends CloudDevice {
 

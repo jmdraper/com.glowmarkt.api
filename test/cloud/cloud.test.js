@@ -568,19 +568,26 @@ test('pairing a gas device lists entries with gas Glowmarkt has data for', async
   assert.deepEqual(driver.getCloudStatus()[0].skipped.map((s) => [s.kind, s.reason]), [['gas', { code: 'read_failed', status: 401 }]]);
 });
 
-test('the gas device shows the latest complete day, its cost, the tariff and data up to, reading no electricity', async () => {
+test('the gas device shows the latest final day, its cost, the tariff and data up to, reading no electricity', async () => {
   const api = fakeCloudApi();
   const { device, caps } = startDevice({ api, gas: true });
   await device.onInit();
   await settle();
-  assert.equal(caps.get('gas_day'), 'Tue 27 Oct');
-  assert.equal(caps.get('gas_day_energy'), 0);
-  assert.equal(caps.get('gas_day_cost'), 0);
+  // gas runs to 27 Oct 23:30 exactly, so 27 Oct waits for a poll an hour later
+  assert.equal(caps.get('gas_day'), 'Mon 26 Oct');
+  assert.equal(caps.get('gas_day_energy'), 6.84);
+  assert.equal(caps.get('gas_day_cost'), 0.54);
   assert.equal(caps.get('data_up_to'), 'Tue 27 Oct 23:30');
   assert.equal(caps.get('tariff'), 7.92);
   assert.equal(caps.get('standing_charge'), 28.84);
   assert.ok(!api.calls.some((c) => c.path.includes(ID['electricity.consumption|electricity consumption'])), 'the gas device read electricity');
   assert.deepEqual(device.getCloudStatus().tariff, { at: RECORDED_AT, gas: { rate: 7.92, standingCharge: 28.84 } });
+
+  now += 60 * 60 * 1000;
+  await device.updateReadings();
+  assert.equal(caps.get('gas_day'), 'Tue 27 Oct');
+  assert.equal(caps.get('gas_day_energy'), 0);
+  assert.equal(caps.get('gas_day_cost'), 0);
 });
 
 test('without a gas tariff ever, the standing charge comes from the setting', async () => {
@@ -600,16 +607,23 @@ test("gas New day's figures: not on the first poll, then once per day, oldest fi
   const first = startDevice({ api: fakeCloudApi(), gas: true });
   await first.device.onInit();
   await settle();
-  assert.equal(first.store.announcedDay, '2026-10-27');
+  assert.equal(first.store.announcedDay, '2026-10-26');
   assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 0);
 
   const gap = startDevice({ api: fakeCloudApi(), gas: true, store: { announcedDay: '2026-10-23' } });
   await gap.device.onInit();
   await settle();
-  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').map((t) => t.tokens.date), ['Sat 24 Oct', 'Sun 25 Oct', 'Mon 26 Oct', 'Tue 27 Oct']);
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').map((t) => t.tokens.date), ['Sat 24 Oct', 'Sun 25 Oct', 'Mon 26 Oct']);
   assert.deepEqual(triggered.find((t) => t.tokens.date === 'Sat 24 Oct').tokens, { date: 'Sat 24 Oct', gas_kwh: 28.081, gas_cost: 2.22 });
+  assert.equal(gap.store.announcedDay, '2026-10-26');
+
+  // 27 Oct, once its last half hour is unchanged an hour later
+  now += 60 * 60 * 1000;
+  await gap.device.updateReadings();
+  assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 4);
   assert.equal(gap.store.announcedDay, '2026-10-27');
 
+  now += 60 * 60 * 1000;
   await gap.device.updateReadings();
   assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 4);
 });
