@@ -3,10 +3,31 @@
     { "$extends": "local_tariff_changed", "$id": "glow_local_electricity_tariff_changed" },
     { "$extends": "local_link_changed", "$id": "glow_local_electricity_link_changed" },
     { "$extends": "local_stopped_reporting", "$id": "glow_local_electricity_stopped_reporting" },
-    { "$extends": "local_resumed_reporting", "$id": "glow_local_electricity_resumed_reporting" }
+    { "$extends": "local_resumed_reporting", "$id": "glow_local_electricity_resumed_reporting" },
+    {
+      "id": "glow_local_electricity_started_exporting",
+      "title": { "en": "Started exporting" },
+      "hint": { "en": "Power has been negative (exporting) for a minute." },
+      "tokens": [
+        { "name": "power", "type": "number", "title": { "en": "Power (W)" }, "example": -1250 }
+      ]
+    },
+    {
+      "id": "glow_local_electricity_stopped_exporting",
+      "title": { "en": "Stopped exporting" },
+      "hint": { "en": "Power has been zero or positive (importing) for a minute." },
+      "tokens": [
+        { "name": "power", "type": "number", "title": { "en": "Power (W)" }, "example": 340 }
+      ]
+    }
   ],
   "conditions": [
     { "$extends": "local_is_reporting", "$id": "glow_local_electricity_is_reporting" },
-    { "$extends": "local_link_connected", "$id": "glow_local_electricity_link_connected" }
+    { "$extends": "local_link_connected", "$id": "glow_local_electricity_link_connected" },
+    {
+      "id": "glow_local_electricity_is_exporting",
+      "title": { "en": "!{{Is|Isn't}} exporting" },
+      "hint": { "en": "Exporting once power has been negative for a minute, until it has been zero or positive for a minute." }
+    }
   ]
 }

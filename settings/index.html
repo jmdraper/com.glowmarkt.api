@@ -526,21 +526,6 @@
       }).join('\n\n');
     }
 
-    async function copyLog() {
-      const text = logAsText();
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (error) {
-        const area = el('textarea', text);
-        document.body.appendChild(area);
-        area.select();
-        document.execCommand('copy');
-        area.remove();
-      }
-      $('copy').textContent = t('settings.copied');
-      setTimeout(() => { $('copy').textContent = t('settings.copy'); }, 1500);
-    }
-
     function api(method, path) {
       return new Promise((resolve, reject) => {
         homey.api(method, path, null, (error, result) => (error ? reject(error) : resolve(result)));
@@ -584,7 +569,7 @@
       $('save').addEventListener('click', save);
       $('start').addEventListener('click', () => startOrStop('/start'));
       $('stop').addEventListener('click', () => startOrStop('/stop'));
-      $('copy').addEventListener('click', copyLog);
+      $('copy').addEventListener('click', () => copyText(logAsText(), $('copy')));
 
       homey.get('mqtt', (error, stored) => {
         saved = { ...DEFAULTS, ...(stored || {}) };

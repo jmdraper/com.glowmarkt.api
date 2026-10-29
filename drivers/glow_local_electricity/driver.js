@@ -8,6 +8,12 @@ class GlowLocalElectricityDriver extends LocalMeterDriver {
     return 'electricitymeter';
   }
 
+  async onInit() {
+    await super.onInit();
+    this.homey.flow.getConditionCard(`${this.id}_is_exporting`)
+      .registerRunListener(({ device }) => device.isExporting());
+  }
+
 }
 
 module.exports = GlowLocalElectricityDriver;

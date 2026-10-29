@@ -272,6 +272,58 @@
         ]
       },
       {
+        "id": "glow_local_electricity_started_exporting",
+        "title": {
+          "en": "Started exporting"
+        },
+        "hint": {
+          "en": "Power has been negative (exporting) for a minute."
+        },
+        "tokens": [
+          {
+            "name": "power",
+            "type": "number",
+            "title": {
+              "en": "Power (W)"
+            },
+            "example": -1250
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_local_electricity"
+          }
+        ]
+      },
+      {
+        "id": "glow_local_electricity_stopped_exporting",
+        "title": {
+          "en": "Stopped exporting"
+        },
+        "hint": {
+          "en": "Power has been zero or positive (importing) for a minute."
+        },
+        "tokens": [
+          {
+            "name": "power",
+            "type": "number",
+            "title": {
+              "en": "Power (W)"
+            },
+            "example": 340
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_local_electricity"
+          }
+        ]
+      },
+      {
         "id": "glow_local_gas_tariff_changed",
         "title": {
           "en": "Tariff changed"
@@ -646,6 +698,22 @@
         ]
       },
       {
+        "id": "glow_local_electricity_is_exporting",
+        "title": {
+          "en": "!{{Is|Isn't}} exporting"
+        },
+        "hint": {
+          "en": "Exporting once power has been negative for a minute, until it has been zero or positive for a minute."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=glow_local_electricity"
+          }
+        ]
+      },
+      {
         "id": "glow_local_gas_is_reporting",
         "title": {
           "en": "Meter !{{is|isn't}} reporting"
@@ -827,7 +895,7 @@
     },
     {
       "name": {
-        "en": "Glow electricity meter (local)"
+        "en": "Electricity meter (local)"
       },
       "class": "sensor",
       "capabilities": [
@@ -946,7 +1014,7 @@
     },
     {
       "name": {
-        "en": "Glow gas meter (local)"
+        "en": "Gas meter (local)"
       },
       "class": "sensor",
       "capabilities": [

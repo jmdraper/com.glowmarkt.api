@@ -1,6 +1,6 @@
 {
   "name": {
-    "en": "Glow electricity meter (local)"
+    "en": "Electricity meter (local)"
   },
   "class": "sensor",
   "capabilities": [

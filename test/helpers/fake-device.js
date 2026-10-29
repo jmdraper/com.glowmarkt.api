@@ -36,7 +36,7 @@ async function makeDevice(Klass, {
     },
     driver: { id: kind === 'gasmeter' ? 'glow_local_gas' : 'glow_local_electricity' },
     getData: () => ({ unitId, kind }),
-    getName: () => (kind === 'gasmeter' ? 'Glow gas meter' : 'Glow electricity meter'),
+    getName: () => (kind === 'gasmeter' ? 'Gas meter (local)' : 'Electricity meter (local)'),
     getStoreValue: (key) => store[key],
     setStoreValue: async (key, value) => { store[key] = JSON.parse(JSON.stringify(value)); },
     getSetting: (key) => settings[key],

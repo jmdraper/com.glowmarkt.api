@@ -101,8 +101,8 @@
       "no_electricity": "it has no electricity consumption resource",
       "no_gas": "it has no gas consumption resource"
     },
-    "debugTitle": "Debug log",
-    "debugHint": "The last 50 messages, newest first. MPAN, MPRN, EUI and supplier are masked to their last four characters.",
+    "debugTitle": "MQTT messages (local)",
+    "debugHint": "The last 50 messages from the display's local MQTT feed, newest first. MPAN, MPRN, EUI and supplier are masked to their last four characters. Cloud devices list their own events in the Cloud section.",
     "copy": "Copy",
     "copied": "Copied",
     "debugEmpty": "No messages yet.",
@@ -131,18 +131,18 @@
   },
   "pair": {
     "gasmeter": {
-      "title": "Add a Glow gas meter",
-      "deviceName": "Glow gas meter",
+      "title": "Add a gas meter (local)",
+      "deviceName": "Gas meter (local)",
       "meterId": "MPRN",
       "waiting": "Waiting for a gas reading from your display. Set up MQTT on the display; this page checks every 2 seconds and moves on as soon as a reading arrives.",
-      "allPaired": "Every display that's sending gas readings already has a Glow gas meter device."
+      "allPaired": "Every display that's sending gas readings already has a Gas meter (local) device."
     },
     "electricitymeter": {
-      "title": "Add a Glow electricity meter",
-      "deviceName": "Glow electricity meter",
+      "title": "Add an electricity meter (local)",
+      "deviceName": "Electricity meter (local)",
       "meterId": "MPAN",
       "waiting": "Waiting for an electricity reading from your display. Set up MQTT on the display; this page checks every 2 seconds and moves on as soon as a reading arrives.",
-      "allPaired": "Every display that's sending electricity readings already has a Glow electricity meter device."
+      "allPaired": "Every display that's sending electricity readings already has an Electricity meter (local) device."
     },
     "steps": "On the display, open Settings → Metering → MQTT and enter these details. The display needs firmware 1.8.12 or later. An Ethernet CAD without a screen is set up at managecads.glowmarkt.com instead.",
     "externalNote": "The app is set to use an external broker, so point the display at that broker, using its IP address rather than a name. You can change this in the app's settings.",

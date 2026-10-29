@@ -85,6 +85,39 @@ test('Tariff changed fires with the new and previous tariff, but not on the firs
   assert.deepEqual(record.triggers, [{ id: 'tariff_changed', tokens: { tariff: 15, previous_tariff: 25.63 } }]);
 });
 
+test('electricity: Started and Stopped exporting fire once power has held its side of zero for a minute', async () => {
+  const power = (kw) => (payload) => { payload.power.value = kw; };
+  const { device, record } = await electricityDevice();
+  const cards = (r) => r.triggers.filter(({ id }) => id.endsWith('_exporting'));
+
+  await deliver(device, 'electricitymeter', power(-1.2));
+  clock += 50 * SECOND;
+  // a kettle within the minute starts the hold again
+  await deliver(device, 'electricitymeter', power(0.3));
+  clock += 10 * SECOND;
+  await deliver(device, 'electricitymeter', power(-1.25));
+  clock += 59 * SECOND;
+  await deliver(device, 'electricitymeter', power(-1.25));
+  assert.deepEqual(cards(record), []);
+  assert.equal(device.isExporting(), false);
+
+  clock += SECOND;
+  await deliver(device, 'electricitymeter', power(-1.25));
+  assert.deepEqual(cards(record), [{ id: 'started_exporting', tokens: { power: -1250 } }]);
+  assert.equal(device.isExporting(), true);
+
+  // the held state survives a restart, so it isn't announced again
+  const restarted = await electricityDevice({ store: record.store });
+  assert.equal(restarted.device.isExporting(), true);
+  clock += 10 * SECOND;
+  await deliver(restarted.device, 'electricitymeter', power(-1.3));
+  await deliver(restarted.device, 'electricitymeter', power(0.24));
+  clock += 60 * SECOND;
+  await deliver(restarted.device, 'electricitymeter', power(0.241));
+  assert.deepEqual(cards(restarted.record), [{ id: 'stopped_exporting', tokens: { power: 241 } }]);
+  assert.equal(restarted.device.isExporting(), false);
+});
+
 test('rejected fields change nothing and are counted per reason', async () => {
   const { device, record } = await electricityDevice();
   await deliver(device, 'electricitymeter');
@@ -283,16 +316,18 @@ test('validation state is saved and restored, so a restart keeps the last good t
   assert.deepEqual(restarted.device.getStatusSummary().rejections, { decreased: 1 });
 });
 
-test('drivers register their two conditions with the device\'s state', async () => {
+test('drivers register their conditions with the device\'s state; electricity adds Is exporting', async () => {
   for (const Driver of [GasDriver, ElectricityDriver]) {
     const driver = new Driver();
     driver.id = Driver === GasDriver ? 'glow_local_gas' : 'glow_local_electricity';
     const listeners = {};
     driver.homey = { flow: { getConditionCard: (id) => ({ registerRunListener: (fn) => { listeners[id] = fn; } }) } };
     await driver.onInit();
-    const device = { isReporting: () => false, isLinkConnected: () => true };
+    const device = { isReporting: () => false, isLinkConnected: () => true, isExporting: () => true };
     assert.equal(await listeners[`${driver.id}_is_reporting`]({ device }), false);
     assert.equal(await listeners[`${driver.id}_link_connected`]({ device }), true);
+    if (Driver === ElectricityDriver) assert.equal(await listeners[`${driver.id}_is_exporting`]({ device }), true);
+    else assert.equal(listeners[`${driver.id}_is_exporting`], undefined);
   }
 });
 
@@ -334,7 +369,7 @@ test('pairing lists units with a masked meter ID and the latest reading, leaving
   assert.equal(state.units.length, 1);
   const [entry] = state.units;
   assert.deepEqual(entry.device, {
-    name: 'Glow electricity meter',
+    name: 'Electricity meter (local)',
     data: { unitId: 'AAA', kind: 'electricitymeter' },
     settings: {
       unit_id: 'AAA', meter_id: '••••0123', hardware: 'GLOW-IHD-02-1v4-SMETS2', software: 'v2.0.2',

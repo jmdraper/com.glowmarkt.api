@@ -169,8 +169,12 @@ test('the capture replayed at 60× ends on its last totals, with only the RSSI r
   assert.equal(electricity.record.caps.get('meter_power.exported'), BASELINE.exportKwh);
   // The meter_gas step happens once: the baseline, then 3182.49.
   assert.deepEqual(gas.record.writes.filter(([c]) => c === 'meter_gas').map(([, v]) => v), [3182.181, 3182.49]);
-  // No tariff change, and the 10 s HAN blip (now 0.17 s) fires nothing.
-  assert.deepEqual([...gas.record.triggers, ...electricity.record.triggers], []);
+  // No tariff change, and the 10 s HAN blip (now 0.17 s) fires nothing. At 60×
+  // the minute's export hold spans an hour of capture: the evening export
+  // starts, its half-hour break at 18:00 is too short to count, and the
+  // overnight import stops it.
+  assert.deepEqual(gas.record.triggers, []);
+  assert.deepEqual(electricity.record.triggers.map(({ id }) => id), ['started_exporting', 'stopped_exporting']);
 });
 
 test('then the synthetic cases follow on from the replay without false rejections', async () => {

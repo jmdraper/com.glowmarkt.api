@@ -1,6 +1,6 @@
 {
   "name": {
-    "en": "Glow gas meter (local)"
+    "en": "Gas meter (local)"
   },
   "class": "sensor",
   "capabilities": [
