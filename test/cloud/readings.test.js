@@ -189,12 +189,52 @@ test('yesterday and the latest gas day, from the readings layer', async () => {
   const readings = new CloudReadings({ request, resources: LIVE.resources });
   const figures = await readings.refresh(RECORDED_AT);
   assert.deepEqual(figures.electricityYesterday, {
-    date: '2026-10-27', kWh: 11.196, pounds: 2.87, final: true,
+    date: '2026-10-27', kWh: 11.196, pounds: 2.87, standingCharge: null, final: true,
   });
   // gas runs to 27 Oct 23:30 exactly: 27 Oct isn't final until a poll an hour later
-  assert.deepEqual(figures.gasLatestDay, { date: '2026-10-26', kWh: 6.84, pounds: 0.54 });
+  assert.deepEqual(figures.gasLatestDay, {
+    date: '2026-10-26', kWh: 6.84, pounds: 0.54, standingCharge: null,
+  });
   assert.equal(figures.dataUpTo['electricity.consumption'], at('2026-10-28T13:18:00Z'));
   assert.equal(figures.dataUpTo['electricity.export'], at('2026-10-26T23:30:00Z'));
+});
+
+test("a day's cost includes the standing charge the tariff gave that day, and is energy only without one", async () => {
+  const { request } = fakeCloudApi();
+  const readings = new CloudReadings({ request, resources: LIVE.resources });
+  // a tariff fetched today doesn't say what yesterday's standing charge was
+  await readings.fetchTariffs(RECORDED_AT);
+  assert.equal((await readings.refresh(RECORDED_AT)).electricityYesterday.pounds, 2.87);
+
+  await readings.fetchTariffs(at('2026-10-26T12:00:30Z'));
+  await readings.fetchTariffs(at('2026-10-27T23:30:30Z'));
+  const figures = await readings.refresh(RECORDED_AT);
+  // 286.95p of energy and 60.7p standing charge
+  assert.deepEqual(figures.electricityYesterday, {
+    date: '2026-10-27', kWh: 11.196, pounds: 3.48, standingCharge: 60.7, final: true,
+  });
+  // 54.17p of energy and 28.84p standing charge
+  assert.deepEqual(figures.gasLatestDay, {
+    date: '2026-10-26', kWh: 6.84, pounds: 0.83, standingCharge: 28.84,
+  });
+
+  // the standing charges survive a restart
+  const restarted = new CloudReadings({ request, resources: LIVE.resources, state: JSON.parse(JSON.stringify(readings)) });
+  assert.equal((await restarted.refresh(RECORDED_AT)).electricityYesterday.pounds, 3.48);
+});
+
+test("a day's standing charge is the last one given that day, and the last 14 days are kept", async () => {
+  const source = new TariffSource({ copies: [ELEC] });
+  const answers = [60.7, 61.2];
+  const request = async () => ({ data: [{ currentRates: { rate: 25.63, standingCharge: answers.shift() } }] });
+  await source.fetch(request, at('2026-10-27T00:00:30Z'));
+  await source.fetch(request, at('2026-10-27T02:00:30Z'));
+  assert.equal(source.standingChargeOn('2026-10-27'), 61.2);
+  assert.equal(source.standingChargeOn('2026-10-26'), null);
+
+  for (let day = 1; day <= 14; day += 1) source.recordStandingCharge(`2026-11-${String(day).padStart(2, '0')}`, 61.2);
+  assert.equal(source.standingChargeOn('2026-10-27'), null);
+  assert.deepEqual(Object.keys(source.toJSON().standingCharges).length, 14);
 });
 
 // Gas days
@@ -211,7 +251,9 @@ test("a gas day is final at once when the data runs past it, as on Jon's account
   const readings = new CloudReadings({ request: api.fakeCloudApi().request, resources: api.ENTRIES[0].resources, commodity: 'gas' });
   const { dataUpTo, gasLatestDay } = await readings.refresh(api.RECORDED_AT);
   assert.equal(dataUpTo['gas.consumption'], at('2026-10-29T06:30:00Z'));
-  assert.deepEqual(gasLatestDay, { date: '2026-10-28', kWh: 0, pounds: 0 });
+  assert.deepEqual(gasLatestDay, {
+    date: '2026-10-28', kWh: 0, pounds: 0, standingCharge: null,
+  });
 });
 
 test('a gas day the data ends with is final once its last half hour is unchanged an hour later', async () => {
@@ -224,7 +266,9 @@ test('a gas day the data ends with is final once its last half hour is unchanged
     request: fakeCloudApi().request, resources: LIVE.resources, commodity: 'gas', state: readings.toJSON(),
   });
   assert.deepEqual(restarted.toJSON().gasSeen, { date: '2026-10-27', last: 0, at: RECORDED_AT });
-  assert.deepEqual((await restarted.refresh(RECORDED_AT + HOUR)).gasLatestDay, { date: '2026-10-27', kWh: 0, pounds: 0 });
+  assert.deepEqual((await restarted.refresh(RECORDED_AT + HOUR)).gasLatestDay, {
+    date: '2026-10-27', kWh: 0, pounds: 0, standingCharge: null,
+  });
 });
 
 test('a gas day is not final between 23:30 and midnight while its data comes through the day', async () => {

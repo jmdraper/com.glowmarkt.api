@@ -1,7 +1,7 @@
 {
   "type": "number",
   "title": {
-    "en": "Electricity cost yesterday"
+    "en": "Electricity cost yesterday, incl. standing charge"
   },
   "uiComponent": "sensor",
   "getable": true,

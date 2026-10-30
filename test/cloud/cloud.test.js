@@ -382,10 +382,30 @@ test('yesterday and data up to come from the readings poll, which reads no gas',
   await device.onInit();
   await settle();
   assert.equal(caps.get('electricity_yesterday'), 11.196);
+  // no tariff was fetched on 27 Oct, so the cost is for energy only
   assert.equal(caps.get('electricity_cost_yesterday'), 2.87);
   assert.equal(caps.get('data_up_to'), 'Wed 28 Oct 13:18');
   const gasIds = [ID['gas.consumption|gas consumption'], ID['gas.consumption|Smart Meter, gas consumption']];
   assert.ok(!api.calls.some((c) => gasIds.some((id) => c.path.includes(id))), 'the electricity device read gas');
+});
+
+test("yesterday's cost includes the standing charge fetched that day; without one, the events say once that it's energy only", async () => {
+  const withCharge = startDevice({
+    api: fakeCloudApi(),
+    store: { cloudReadings: { tariffs: { electricity: { standingCharges: { '2026-10-27': 60.7 } } } } },
+  });
+  await withCharge.device.onInit();
+  await settle();
+  assert.equal(withCharge.caps.get('electricity_cost_yesterday'), 3.48);
+  assert.ok(!withCharge.device.events.some((e) => e.text.includes('energy only')));
+
+  const { device } = startDevice({ api: fakeCloudApi() });
+  await device.onInit();
+  await settle();
+  await device.updateReadings();
+  assert.deepEqual(device.events.filter((e) => e.text.includes('energy only')).map((e) => [e.text, e.count]), [
+    ['Cost for Tue 27 Oct is for energy only: no standing charge was fetched that day', 1],
+  ]);
 });
 
 test('rates and standing charges come from /tariff, and Tariff changed fires when the rate changes', async () => {

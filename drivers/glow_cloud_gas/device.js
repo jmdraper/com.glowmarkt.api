@@ -53,6 +53,7 @@ class GlowCloudGasDevice extends CloudDevice {
         await this.setIfChanged('gas_day', dayLabel(day.date));
         await this.setIfChanged('gas_day_energy', day.kWh);
         await this.setIfChanged('gas_day_cost', day.pounds);
+        this.noteEnergyOnlyCost(day);
       }
 
       await this.checkLate(lastTime, now);
@@ -98,6 +99,7 @@ class GlowCloudGasDevice extends CloudDevice {
     for (const date of dates) {
       const day = date === latest.date ? latest : await readings.gasDay(date);
       if (!day) break;
+      this.noteEnergyOnlyCost(day);
       this.announcedDay = date;
       await this.setStoreValue('announcedDay', date).catch(this.error);
       this.event(`New day's figures for ${dayLabel(date)}: ${day.kWh} kWh, £${day.pounds ?? 0}`);

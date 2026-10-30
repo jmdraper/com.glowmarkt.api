@@ -182,6 +182,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       const yesterday = figures.electricityYesterday && figures.electricityYesterday.final ? figures.electricityYesterday : null;
       await this.setIfChanged('electricity_yesterday', yesterday ? yesterday.kWh : null);
       await this.setIfChanged('electricity_cost_yesterday', yesterday ? yesterday.pounds : null);
+      this.noteEnergyOnlyCost(yesterday);
 
       await this.announceNewDay(figures, now);
       await this.saveReadings();

@@ -1,7 +1,7 @@
 {
   "type": "number",
   "title": {
-    "en": "Latest complete day"
+    "en": "Latest complete day cost, incl. standing charge"
   },
   "uiComponent": "sensor",
   "getable": true,

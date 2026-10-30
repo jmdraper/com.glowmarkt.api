@@ -66,7 +66,7 @@
           "en": "New day's figures"
         },
         "hint": {
-          "en": "Fires once for each day of gas, when Glowmarkt receives it, usually a day or more later. If several days arrive at once, it fires once for each, oldest first. The cost is for energy only, without the standing charge."
+          "en": "Fires once for each day of gas, when Glowmarkt receives it, usually a day or more later. If several days arrive at once, it fires once for each, oldest first. The cost includes the day's standing charge, if the app fetched the tariff that day."
         },
         "tokens": [
           {
@@ -598,7 +598,7 @@
           "en": "New day's figures"
         },
         "hint": {
-          "en": "Fires once a day, when Glowmarkt has the meter's own figures for the previous day. Costs are for energy only, without the standing charge."
+          "en": "Fires once a day, when Glowmarkt has the meter's own figures for the previous day. The cost includes the day's standing charge, if the app fetched the tariff that day."
         },
         "tokens": [
           {
@@ -1262,7 +1262,7 @@
     "electricity_cost_yesterday": {
       "type": "number",
       "title": {
-        "en": "Electricity cost yesterday"
+        "en": "Electricity cost yesterday, incl. standing charge"
       },
       "uiComponent": "sensor",
       "getable": true,
@@ -1318,7 +1318,7 @@
     "gas_day_cost": {
       "type": "number",
       "title": {
-        "en": "Latest complete day"
+        "en": "Latest complete day cost, incl. standing charge"
       },
       "uiComponent": "sensor",
       "getable": true,
