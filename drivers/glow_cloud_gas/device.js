@@ -130,6 +130,11 @@ class GlowCloudGasDevice extends CloudDevice {
     }
   }
 
+  standingChargeSetting() {
+    const setting = Number(this.getSetting('gas_standing_charge'));
+    return setting > 0 ? setting : null;
+  }
+
   async showTariff(setting = this.getSetting('gas_standing_charge')) {
     const source = this.readings && this.readings.tariffs.gas;
     const last = source && source.last;

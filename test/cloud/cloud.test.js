@@ -610,6 +610,33 @@ test('the gas device shows the latest final day, its cost, the tariff and data u
   assert.equal(caps.get('gas_day_cost'), 0);
 });
 
+test("a gas day's cost adds the standing charge Glowmarkt gave that day, else the setting, else none", async () => {
+  // 54.17p of energy on 26 Oct
+  const energyOnly = (device) => device.events.filter((e) => e.text.includes('energy only')).map((e) => e.text);
+
+  const reported = startDevice({
+    api: fakeCloudApi(),
+    gas: true,
+    settings: { gas_standing_charge: 30.5 },
+    store: { cloudReadings: { tariffs: { gas: { standingCharges: { '2026-10-26': 28.84 } } } } },
+  });
+  await reported.device.onInit();
+  await settle();
+  assert.equal(reported.caps.get('gas_day_cost'), 0.83);
+
+  const setting = startDevice({ api: fakeCloudApi(), gas: true, settings: { gas_standing_charge: 30.5 } });
+  await setting.device.onInit();
+  await settle();
+  assert.equal(setting.caps.get('gas_day_cost'), 0.85);
+  assert.deepEqual(energyOnly(setting.device), []);
+
+  const neither = startDevice({ api: fakeCloudApi(), gas: true, settings: { gas_standing_charge: 0 } });
+  await neither.device.onInit();
+  await settle();
+  assert.equal(neither.caps.get('gas_day_cost'), 0.54);
+  assert.deepEqual(energyOnly(neither.device), ['Cost for Mon 26 Oct is for energy only: no standing charge was fetched that day']);
+});
+
 test('without a gas tariff ever, the standing charge comes from the setting', async () => {
   const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
   const api = fakeCloudApi({ overrides: { [`tariff ${GAS}`]: timeout, [`tariff ${GAS_SMART}`]: timeout } });

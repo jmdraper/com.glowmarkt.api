@@ -888,7 +888,7 @@
             "en": "p/day"
           },
           "hint": {
-            "en": "Used only if Glowmarkt has never given a gas tariff for this meter; leave at 0 if you don't want it shown."
+            "en": "Shown if Glowmarkt has never given a gas tariff for this meter, and added to the cost of any day Glowmarkt gave no standing charge for. Leave at 0 if you don't want it used."
           }
         }
       ]
