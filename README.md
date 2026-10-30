@@ -3,7 +3,7 @@
 The [Glowmarkt Display and CAD \(Consumer Access Display\)](https://shop.glowmarkt.com) allows you to see real time usage and tariff information from your UK smart meter. Versions are available to connect to most UK SMETS 1 and SMETS 2 meters. This app brings your smart meter readings into Homey in two ways:
 
 * **Electricity meter (cloud)** and **Gas meter (cloud):** devices that read your meter data from the Glowmarkt cloud. The electricity meter, formerly *Display and CAD (API)*, shows live power and daily figures; the gas meter shows each day's gas once Glowmarkt has it.
-* **Glow electricity meter (local) and Glow gas meter (local):** devices that read your display's local MQTT feed directly, without the internet. These add live gas, exported electricity and display link status.
+* **Electricity meter (local)** and **Gas meter (local)**, formerly *Glow electricity meter (local)* and *Glow gas meter (local)*: devices that read your display's local MQTT feed directly, without the internet. These add live gas, exported electricity and display link status.
 
 You can use either or both. Nothing changes for the cloud devices if you never add a local one: the app doesn't run anything for the local devices, or open any network port, until you add one.
 
@@ -19,7 +19,7 @@ When you add a cloud device in Homey, you will be asked to enter your Bright app
 
 The app's settings page has a Cloud section showing, for each account, when each device last read successfully, the last error, any entries left out at pairing, and when the login next renews. For each device it also shows which of Glowmarkt's copies of each reading it uses, how recent each one's data is, and the last tariff Glowmarkt gave. A list of recent cloud events (logins, errors, each tariff request and the flow cards fired) can be copied from there for a bug report.
 
-Costs come from Glowmarkt, which prices each half hour, and are for energy only, without the standing charge.
+Daily costs are Glowmarkt's cost for the day's energy plus the day's standing charge, as in the Bright app. Costs use the unit rate and standing charge Glowmarkt reports, which may not match a time-of-use tariff. The standing charge is the one the app fetched on that day; if it didn't fetch the tariff that day (for example, the day before you installed it), gas uses the standing charge in the device's settings, if you've entered one; otherwise the cost is for energy only and the Cloud events say so.
 
 ### Electricity meter (cloud)
 
@@ -31,7 +31,7 @@ It shows:
 
 * **Power, energy and tariff:** live power, the imported energy total that feeds Homey Energy, and the unit rate.
 * **Electricity today:** energy imported since midnight, from the meter's import register. It needs a reading from just before midnight, so it stays empty until the next midnight after you add the device, or if Homey was off over midnight.
-* **Electricity yesterday** and **Electricity cost yesterday:** Glowmarkt first fills each day from your display, then replaces it with the meter's own figures. These show yesterday only once that has happened, and are empty until then.
+* **Electricity yesterday** and **Electricity cost yesterday, incl. standing charge:** Glowmarkt first fills each day from your display, then replaces it with the meter's own figures. These show yesterday only once that has happened, and are empty until then.
 * **Standing charge**, from your tariff in Glowmarkt.
 * **Data up to:** the time of Glowmarkt's latest electricity reading.
 
@@ -41,8 +41,8 @@ Flow cards:
 
 * *Meter stopped reporting* and *Meter resumed reporting*, and the *Meter is reporting* condition: Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than the device's *Stale after* setting (5 minutes by default).
 * *Account needs attention*, with the reason, and the *Account is OK* condition: fires once when logging in has failed for 30 minutes, or Glowmarkt refuses the meter even after logging in again, and again only after the account has worked in between.
-* *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: power has been negative, or zero or positive, for a minute.
-* *New day's figures*: once a day, when yesterday's figures are final, with the date, kWh and cost in £.
+* *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: exporting starts once power has been below −50 W for a minute, and stops once it has been zero or above for a minute.
+* *New day's figures*: once a day, when yesterday's figures are final, with the date, kWh and cost in £ (including the standing charge).
 * *Tariff changed*: the unit rate has changed.
 
 ### Gas meter (cloud)
@@ -51,15 +51,15 @@ Glowmarkt receives gas in whole days, a day or more late, on some accounts, and 
 
 It shows:
 
-* **Latest complete day**: its date, the gas used and its cost.
-* **Tariff** and **Standing charge**, from your gas tariff in Glowmarkt. If Glowmarkt never gives a gas tariff for your meter, you can enter the standing charge in the device's settings.
+* **Latest complete day**: its date, the gas used and its cost, including the standing charge.
+* **Tariff** and **Standing charge**, from your gas tariff in Glowmarkt. If Glowmarkt never gives a gas tariff for your meter, you can enter the standing charge in the device's settings; it's then shown here and added to each day's cost.
 * **Data up to:** the end of the latest half hour Glowmarkt has gas for.
 
 The daily figures are checked every hour and the tariff every half hour.
 
 Flow cards:
 
-* *New day's figures*: once for each day of gas as it arrives, with the date, kWh and cost in £. If several days arrive at once, it fires once for each, oldest first.
+* *New day's figures*: once for each day of gas as it arrives, with the date, kWh and cost in £ (including the standing charge). If several days arrive at once, it fires once for each, oldest first.
 * *Data is late*, with the days behind, and the *Data is up to date* condition: Glowmarkt's gas data is more than 3 days old. Fires once, and again only after the data has caught up.
 * *Account needs attention* and the *Account is OK* condition, as on the electricity meter.
 
@@ -73,22 +73,24 @@ Flow cards:
 ### Setting up
 
 1. Open the app's settings in Homey. By default the app runs its own MQTT broker on port 1884. You can change the port, require a username and password, or use an external MQTT broker instead.
-2. Add a *Glow electricity meter (local)* or *Glow gas meter (local)* device. The pairing screen shows exactly what to enter on the display.
+2. Add an *Electricity meter (local)* or *Gas meter (local)* device. The pairing screen shows exactly what to enter on the display.
 3. On the display, open Settings → Metering → MQTT and enter Homey's IP address, the port, the topic prefix (`glow` by default) and, if you turned it on, the username and password. An Ethernet CAD without a screen is set up at managecads.glowmarkt.com instead.
 4. As soon as the display sends a reading, the pairing screen lists it. Choose it and add it.
 
 The broker accepts readings from the display without a password unless you turn authentication on. It never lets other devices on your network subscribe and read your meter data, unless authentication is on and they log in with the same username and password. That's useful for checking the feed with a tool such as `mosquitto_sub`.
 
-The settings page shows the broker's status, each display it has heard from, and a debug log of recent messages. Meter numbers (MPAN, MPRN) and other identifiers are masked to their last four characters there and in the app's logs.
+The settings page shows the broker's status, each display it has heard from, and the recent messages from the display under *MQTT messages (local)*, which you can copy for a bug report. Meter numbers (MPAN, MPRN) and other identifiers are masked to their last four characters there and in the app's logs.
 
 ### The devices
 
-* **Glow electricity meter (local):** live power in W (negative while you're exporting), imported and exported energy totals, tariff, standing charge and display link status.
-* **Glow gas meter (local):** gas used in m³, gas energy in kWh, tariff, standing charge and display link status. Gas meters report every half hour, so the reading moves in half-hourly steps.
+* **Electricity meter (local):** live power in W (negative while you're exporting), imported and exported energy totals, tariff, standing charge and display link status.
+* **Gas meter (local):** gas used in m³, gas energy in kWh, tariff, standing charge and display link status. Gas meters report every half hour, so the reading moves in half-hourly steps.
 
 Both devices feed Homey Energy. **The electricity device registers as a whole-home meter.** If you already have one, such as a P1 meter, an inverter's meter or the *Electricity meter (cloud)* device, exclude one of them in Energy so your usage isn't counted twice.
 
 If your display doesn't report gas volume, the gas device shows a warning and can't feed Homey Energy.
+
+The electricity meter has *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition, as on the cloud electricity meter: exporting starts once power has been below −50 W for a minute, and stops once it has been zero or above for a minute, so a passing cloud, a kettle or a battery holding the grid just below zero doesn't flip it.
 
 The tariff and standing charge are shown in pence. *Tariff changed* fires only if your supplier has programmed time-of-use rates into the meter. Many tariffs, including Octopus Flux, hold a single rate in the meter and bill time-of-use rates from half-hourly data, so the meter's rate never changes.
 
