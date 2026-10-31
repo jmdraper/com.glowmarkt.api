@@ -237,6 +237,23 @@ test("a day's standing charge is the last one given that day, and the last 14 da
   assert.deepEqual(Object.keys(source.toJSON().standingCharges).length, 14);
 });
 
+test('a day with no standing charge takes the one either side when they agree, as when /tariff timed out all of 30 Oct', () => {
+  const source = new TariffSource({
+    copies: [ELEC],
+    standingCharges: {
+      '2026-10-28': 60.7, '2026-10-29': 60.7, '2026-10-31': 60.7, '2026-11-03': 61.2,
+    },
+  });
+  // bridged: 29 Oct and 31 Oct agree
+  assert.equal(source.standingChargeOn('2026-10-30'), 60.7);
+  // the charge changed somewhere between 31 Oct and 3 Nov, so neither day is known
+  assert.equal(source.standingChargeOn('2026-11-01'), null);
+  assert.equal(source.standingChargeOn('2026-11-02'), null);
+  // nothing before, or nothing yet after
+  assert.equal(source.standingChargeOn('2026-10-27'), null);
+  assert.equal(source.standingChargeOn('2026-11-04'), null);
+});
+
 // Gas days
 
 const HOUR = 60 * 60 * 1000;

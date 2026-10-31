@@ -408,6 +408,22 @@ test("yesterday's cost includes the standing charge fetched that day; without on
   ]);
 });
 
+test("yesterday with no standing charge takes the one either side if they agree, else it's energy only", async () => {
+  // 26 Oct is stored; the tariff fetched at start records 28 Oct as 60.7p
+  const yesterdayCost = async (charge26) => {
+    const { device, caps } = startDevice({
+      api: fakeCloudApi(),
+      store: { cloudReadings: { tariffs: { electricity: { standingCharges: { '2026-10-26': charge26 } } } } },
+    });
+    await device.onInit();
+    await settle();
+    await device.updateReadings();
+    return { cost: caps.get('electricity_cost_yesterday'), energyOnly: device.events.some((e) => e.text.includes('energy only')) };
+  };
+  assert.deepEqual(await yesterdayCost(60.7), { cost: 3.48, energyOnly: false });
+  assert.deepEqual(await yesterdayCost(59.1), { cost: 2.87, energyOnly: true });
+});
+
 test('rates and standing charges come from /tariff, and Tariff changed fires when the rate changes', async () => {
   const { device, caps } = startDevice({ api: fakeCloudApi(), capabilities: { tariff: 24.5 } });
   await device.onInit();
@@ -635,6 +651,26 @@ test("a gas day's cost adds the standing charge Glowmarkt gave that day, else th
   await settle();
   assert.equal(neither.caps.get('gas_day_cost'), 0.54);
   assert.deepEqual(energyOnly(neither.device), ['Cost for Mon 26 Oct is for energy only: no standing charge was fetched that day']);
+});
+
+test("a gas day with no standing charge takes the one either side if they agree, before the setting", async () => {
+  // 26 Oct has no charge; 25 Oct is stored, and the tariff fetched at start records 28 Oct as 28.84p
+  const gasCost = async (charge25, setting) => {
+    const { device, caps } = startDevice({
+      api: fakeCloudApi(),
+      gas: true,
+      settings: { gas_standing_charge: setting },
+      store: { cloudReadings: { tariffs: { gas: { standingCharges: { '2026-10-25': charge25 } } } } },
+    });
+    await device.onInit();
+    await settle();
+    await device.updateReadings();
+    return { cost: caps.get('gas_day_cost'), energyOnly: device.events.some((e) => e.text.includes('energy only')) };
+  };
+  assert.deepEqual(await gasCost(28.84, 30.5), { cost: 0.83, energyOnly: false });
+  // the charge changed across the gap: the setting, then energy only
+  assert.deepEqual(await gasCost(27.5, 30.5), { cost: 0.85, energyOnly: false });
+  assert.deepEqual(await gasCost(27.5, 0), { cost: 0.54, energyOnly: true });
 });
 
 test('without a gas tariff ever, the standing charge comes from the setting', async () => {

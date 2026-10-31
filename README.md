@@ -19,7 +19,7 @@ When you add a cloud device in Homey, you will be asked to enter your Bright app
 
 The app's settings page has a Cloud section showing, for each account, when each device last read successfully, the last error, any entries left out at pairing, and when the login next renews. For each device it also shows which of Glowmarkt's copies of each reading it uses, how recent each one's data is, and the last tariff Glowmarkt gave. A list of recent cloud events (logins, errors, each tariff request and the flow cards fired) can be copied from there for a bug report.
 
-Daily costs are Glowmarkt's cost for the day's energy plus the day's standing charge, as in the Bright app. Costs use the unit rate and standing charge Glowmarkt reports, which may not match a time-of-use tariff. The standing charge is the one the app fetched on that day; if it didn't fetch the tariff that day (for example, the day before you installed it), gas uses the standing charge in the device's settings, if you've entered one; otherwise the cost is for energy only and the Cloud events say so.
+Daily costs are Glowmarkt's cost for the day's energy plus the day's standing charge, as in the Bright app. Costs use the unit rate and standing charge Glowmarkt reports, which may not match a time-of-use tariff. The standing charge is the one the app fetched on that day. If Glowmarkt didn't answer that day, the app uses the charge from the days either side, as long as they're the same. Failing that, gas uses the standing charge in the device's settings, if you've entered one; otherwise the cost is for energy only (as for the day before you installed the app) and the Cloud events say so.
 
 ### Electricity meter (cloud)
 
