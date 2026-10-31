@@ -98,9 +98,9 @@ test('full capture: three export runs start and stop, and power hovering near ze
   const { exportEvents } = replay(path.join(FIXTURES, 'glow-capture.jsonl.gz'));
   assert.deepEqual(exportEvents.map(({ received, event, power }) => `${received.slice(11, 19)} ${event} ${power}`), [
     '16:09:23 started -3877',
-    '17:58:43 stopped 0',
+    '17:58:12 stopped 0',
     '18:28:23 started -3843',
-    '18:35:23 stopped 0',
+    '18:34:13 stopped -5',
     '08:35:23 started -3849',
     '08:37:23 stopped 241',
   ]);

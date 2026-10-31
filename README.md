@@ -41,7 +41,7 @@ Flow cards:
 
 * *Meter stopped reporting* and *Meter resumed reporting*, and the *Meter is reporting* condition: Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than the device's *Stale after* setting (5 minutes by default).
 * *Account needs attention*, with the reason, and the *Account is OK* condition: fires once when logging in has failed for 30 minutes, or Glowmarkt refuses the meter even after logging in again, and again only after the account has worked in between.
-* *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: exporting starts once power has been below −50 W for a minute, and stops once it has been zero or above for a minute.
+* *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: exporting starts once power has been below −50 W for a minute, and stops once it has been above −20 W for a minute.
 * *New day's figures*: once a day, when yesterday's figures are final, with the date, kWh and cost in £ (including the standing charge).
 * *Tariff changed*: the unit rate has changed.
 
@@ -90,7 +90,7 @@ Both devices feed Homey Energy. **The electricity device registers as a whole-ho
 
 If your display doesn't report gas volume, the gas device shows a warning and can't feed Homey Energy.
 
-The electricity meter has *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition, as on the cloud electricity meter: exporting starts once power has been below −50 W for a minute, and stops once it has been zero or above for a minute, so a passing cloud, a kettle or a battery holding the grid just below zero doesn't flip it.
+The electricity meter has *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition, as on the cloud electricity meter: exporting starts once power has been below −50 W for a minute, and stops once it has been above −20 W for a minute, so a passing cloud, a kettle or a battery holding the grid just below zero doesn't flip it either way.
 
 The tariff and standing charge are shown in pence. *Tariff changed* fires only if your supplier has programmed time-of-use rates into the meter. Many tariffs, including Octopus Flux, hold a single rate in the meter and bill time-of-use rates from half-hourly data, so the meter's rate never changes.
 

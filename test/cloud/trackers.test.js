@@ -35,7 +35,7 @@ test('power hovering just below zero (-5 to -25 W) for half an hour fires nothin
   assert.equal(tracker.exporting, false);
 });
 
-test('exporting starts only below -50 W, and stops only at 0 W or above', () => {
+test('exporting starts only below -50 W, and stops only above -20 W', () => {
   const tracker = new ExportingTracker();
   const t0 = at('2026-10-29T16:00:00Z');
   // -50 W exactly isn't exporting, so it doesn't start the hold.
@@ -47,14 +47,27 @@ test('exporting starts only below -50 W, and stops only at 0 W or above', () => 
   assert.equal(tracker.power(-60, t0 + 4 * MINUTE), null);
   assert.deepEqual(tracker.power(-60, t0 + 5 * MINUTE), { event: 'started', power: -60 });
 
-  // Once exporting, a small export keeps it going, and any negative reading
-  // restarts the hold towards stopping.
-  assert.equal(tracker.power(-5, t0 + 10 * MINUTE), null);
-  assert.equal(tracker.power(-5, t0 + 20 * MINUTE), null);
-  assert.equal(tracker.power(0, t0 + 21 * MINUTE), null);
-  assert.equal(tracker.power(-1, t0 + 21.5 * MINUTE), null);
-  assert.equal(tracker.power(0, t0 + 22 * MINUTE), null);
-  assert.deepEqual(tracker.power(0, t0 + 23 * MINUTE), { event: 'stopped', power: 0 });
+  // Once exporting, -20 W or below keeps it going, and restarts the hold
+  // towards stopping.
+  assert.equal(tracker.power(-20, t0 + 10 * MINUTE), null);
+  assert.equal(tracker.power(-20, t0 + 20 * MINUTE), null);
+  assert.equal(tracker.power(-19, t0 + 21 * MINUTE), null);
+  assert.equal(tracker.power(-25, t0 + 21.5 * MINUTE), null);
+  assert.equal(tracker.power(-19, t0 + 22 * MINUTE), null);
+  assert.deepEqual(tracker.power(-19, t0 + 23 * MINUTE), { event: 'stopped', power: -19 });
+});
+
+test('after exporting, power hovering between -20 and 0 W counts as stopped once held a minute', () => {
+  const tracker = new ExportingTracker({ exporting: true });
+  const t0 = at('2026-10-30T17:55:00Z');
+  const hover = [-3, -12, -19, -7, 0, -15, -1, -9];
+  const events = [];
+  for (let i = 0; i < 180; i += 1) {
+    const change = tracker.power(hover[i % hover.length], t0 + i * 10000);
+    if (change) events.push({ at: i * 10000, ...change });
+  }
+  assert.deepEqual(events, [{ at: 60000, event: 'stopped', power: -1 }]);
+  assert.equal(tracker.exporting, false);
 });
 
 test('a restart keeps the exporting state, so nothing is announced twice', () => {
