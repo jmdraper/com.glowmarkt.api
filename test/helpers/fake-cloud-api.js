@@ -6,9 +6,9 @@
 // including the zero padding the API adds after /last-time.
 //
 // The exports are for the recording on 28 Oct at 13:40. recordingApi(name)
-// gives the same for another, such as display-account-29oct-0630 (29 Oct at
-// 06:30) or display-account-29oct-1500 (15:00). All three use the same
-// stand-in IDs.
+// gives the same for another: display-account-29oct-0630 (29 Oct at 06:30),
+// display-account-29oct-1500 (15:00) or display-account-01nov-0700 (1 Nov at
+// 07:00). All four use the same stand-in IDs.
 
 const fs = require('fs');
 const path = require('path');
