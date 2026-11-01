@@ -619,15 +619,50 @@ test('cloud events list polling, tariff fetches and cards, newest first, without
   assert.ok(!JSON.stringify(device.getCloudStatus().events).includes('00000000-'), 'events contain a resource ID');
 });
 
-test('a repeated cloud event is counted on one line, and only the last 30 are kept', () => {
+test('a repeated cloud event is counted on one line, and only the last 50 are kept', () => {
   const driver = makeDriver();
-  const { device } = makeDevice(driver);
+  const { device, store } = makeDevice(driver);
   device.event('Power poll failed: HTTP 503 from /current', 1000);
   device.event('Power poll failed: HTTP 503 from /current', 2000);
   assert.deepEqual(device.events, [{ at: 2000, text: 'Power poll failed: HTTP 503 from /current', count: 2 }]);
-  for (let i = 0; i < 40; i += 1) device.event(`event ${i}`, 3000 + i);
-  assert.equal(device.events.length, 30);
-  assert.equal(device.events[0].text, 'event 39');
+  for (let i = 0; i < 60; i += 1) device.event(`event ${i}`, 3000 + i);
+  assert.equal(device.events.length, 50);
+  assert.equal(device.events[0].text, 'event 59');
+  assert.equal(store.events.length, 50);
+});
+
+test('the cloud events list survives a restart', () => {
+  const driver = makeDriver();
+  const { device, store } = makeDevice(driver);
+  device.setUpCloud();
+  device.event('Logged in', 1000);
+  device.event('Tariff from electricity consumption: 25.63 p/kWh, 60.7 p/day', 2000);
+
+  // a new device object on the same store, as after a restart or app update
+  const restarted = new Device();
+  Object.assign(restarted, device, { events: undefined });
+  restarted.setUpCloud();
+  assert.deepEqual(restarted.getCloudStatus().events.map((e) => e.text), [
+    'Tariff from electricity consumption: 25.63 p/kWh, 60.7 p/day', 'Logged in',
+  ]);
+  restarted.event('Polling started, power every 10 s', 3000);
+  assert.deepEqual(store.events.map((e) => e.text), [
+    'Polling started, power every 10 s', 'Tariff from electricity consumption: 25.63 p/kWh, 60.7 p/day', 'Logged in',
+  ]);
+});
+
+test('a run of repeated cloud events writes the store only for the first', () => {
+  const driver = makeDriver();
+  const { device, store } = makeDevice(driver);
+  const writes = [];
+  device.setStoreValue = async (key, value) => { writes.push(key); store[key] = value; };
+  for (let i = 0; i < 20; i += 1) device.event('Tariff: every copy timed out in the last 2 hours, so none was asked', 1000 + i);
+  assert.deepEqual(writes, ['events']);
+  assert.deepEqual(device.events.map((e) => e.count), [20]);
+  // the next new event stores the count so far
+  device.event('Tariff from electricity consumption: 25.63 p/kWh, 60.7 p/day', 2000);
+  assert.deepEqual(writes, ['events', 'events']);
+  assert.deepEqual(store.events.map((e) => e.count), [1, 20]);
 });
 
 test('a tariff copy that times out is a cloud event naming the copy', async () => {

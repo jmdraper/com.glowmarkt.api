@@ -90,7 +90,7 @@
       "readings": "Readings"
     },
     "cloudEvents": "Cloud events",
-    "cloudEventsHint": "The last 30 events for each device, newest first: polling, logins, errors, tariff fetches and flow cards fired. Repeats are counted on one line. Kept until the app restarts.",
+    "cloudEventsHint": "The last 50 events for each device, newest first: polling, logins, errors, tariff fetches and flow cards fired. Repeats are counted on one line. Kept across restarts and app updates.",
     "cloudEventsEmpty": "No events yet.",
     "skippedEntries": "Left out at the last pairing",
     "skipReason": {
