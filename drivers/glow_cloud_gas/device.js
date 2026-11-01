@@ -2,7 +2,7 @@
 
 const CloudDevice = require('../../lib/cloud/CloudDevice');
 const { apiError } = require('../../lib/cloud/glowmarkt');
-const { gasDaysToAnnounce } = require('../../lib/cloud/newDay');
+const { gasDaysToAnnounce, readyToAnnounce } = require('../../lib/cloud/newDay');
 const { DAY_MS, dayLabel, dateTimeLabel } = require('../../lib/cloud/days');
 
 // Gas is shown a day at a time, so hourly is plenty.
@@ -53,11 +53,12 @@ class GlowCloudGasDevice extends CloudDevice {
         await this.setIfChanged('gas_day', dayLabel(day.date));
         await this.setIfChanged('gas_day_energy', day.kWh);
         await this.setIfChanged('gas_day_cost', day.pounds);
+        this.noteCostMismatch(day);
         this.noteEnergyOnlyCost(day);
       }
 
       await this.checkLate(lastTime, now);
-      await this.announceNewDays(readings, day);
+      await this.announceNewDays(readings, day, now);
       await this.saveReadings();
       await this.saveState();
       this.cloudStatus.lastSuccessAt = now;
@@ -84,10 +85,11 @@ class GlowCloudGasDevice extends CloudDevice {
 
   /**
    * Fires New day's figures for each complete day since the last one
-   * announced, oldest first. Not on the first poll after installing: the
-   * latest day then is recorded, not announced.
+   * announced, oldest first, each once its standing charge is known or by its
+   * deadline. Not on the first poll after installing: the latest day then is
+   * recorded, not announced.
    */
-  async announceNewDays(readings, latest) {
+  async announceNewDays(readings, latest, now) {
     if (this.announcedDay === undefined) {
       this.announcedDay = latest ? latest.date : null;
       await this.setStoreValue('announcedDay', this.announcedDay).catch(this.error);
@@ -97,8 +99,9 @@ class GlowCloudGasDevice extends CloudDevice {
     // With nothing announced yet, start from the latest day rather than catching up.
     const dates = this.announcedDay === null ? [latest.date] : gasDaysToAnnounce(latest.date, this.announcedDay);
     for (const date of dates) {
-      const day = date === latest.date ? latest : await readings.gasDay(date);
-      if (!day) break;
+      const day = date === latest.date ? latest : await readings.gasDay(date, now);
+      if (!day || !readyToAnnounce(day, now)) break;
+      this.noteCostMismatch(day);
       this.noteEnergyOnlyCost(day);
       this.announcedDay = date;
       await this.setStoreValue('announcedDay', date).catch(this.error);

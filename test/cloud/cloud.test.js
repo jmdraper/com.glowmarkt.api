@@ -242,7 +242,9 @@ test('summarise strips IDs, URLs and bodies from unexpected errors', () => {
 // Device lifecycle and the new capabilities and cards
 
 const AccountHealth = require('../../lib/cloud/AccountHealth');
-const { fakeCloudApi, RECORDED_AT, ENTRIES, ID } = require('../helpers/fake-cloud-api');
+const {
+  fakeCloudApi, recordingApi, RECORDED_AT, ENTRIES, ID,
+} = require('../helpers/fake-cloud-api');
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 10); });
 const realNow = Date.now;
@@ -441,14 +443,67 @@ test("New day's figures doesn't fire on the first poll after install", async () 
   assert.equal(triggered.filter((t) => t.id === 'cloud_new_day_figures').length, 0);
 });
 
-test("New day's figures fires once for a final day", async () => {
-  const { device } = startDevice({ api: fakeCloudApi(), store: { announcedDay: '2026-10-26' } });
+test("New day's figures fires once for a final day, with its standing charge", async () => {
+  const { device } = startDevice({
+    api: fakeCloudApi(),
+    store: { announcedDay: '2026-10-26', cloudReadings: { tariffs: { electricity: { standingCharges: { '2026-10-27': 60.7 } } } } },
+  });
   await device.onInit();
   await settle();
   await device.updateReadings();
   assert.deepEqual(triggered.filter((t) => t.id === 'cloud_new_day_figures').map((t) => t.tokens), [{
+    date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 3.48,
+  }]);
+});
+
+test("New day's figures waits for the standing charge, then goes out at 23:30 as energy only", async () => {
+  // the tariff fetched at start gives 28 Oct's standing charge, but nothing before it gives 27 Oct's
+  const { device, caps } = startDevice({ api: fakeCloudApi(), store: { announcedDay: '2026-10-26' } });
+  await device.onInit();
+  await settle();
+  await device.updateReadings();
+  // the tile shows straight away; the card waits
+  assert.equal(caps.get('electricity_cost_yesterday'), 2.87);
+  now = Date.parse('2026-10-28T23:29:00Z');
+  await device.updateReadings();
+  assert.equal(triggered.filter((t) => t.id === 'cloud_new_day_figures').length, 0);
+
+  now = Date.parse('2026-10-28T23:30:00Z');
+  await device.updateReadings();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_new_day_figures').map((t) => t.tokens), [{
     date: 'Tue 27 Oct', electricity_kwh: 11.196, electricity_cost: 2.87,
   }]);
+  assert.equal(device.events.filter((e) => e.text === 'Cost for Tue 27 Oct is for energy only: no standing charge was fetched that day').length, 1);
+});
+
+test("yesterday whose cost never lines up with its energy goes out at 23:30 as it is, with a Cloud events line", async () => {
+  // 28 Oct at 15:00 the next day: the meter's energy, but the display's cost from 06:30
+  const late = recordingApi('display-account-29oct-1500');
+  const early = recordingApi('display-account-29oct-0630').fakeCloudApi();
+  const costIds = [ID['electricity.consumption.cost|electricity cost'], ID['electricity.consumption.cost|Smart Meter, electricity cost']];
+  const api = late.fakeCloudApi({ overrides: Object.fromEntries(costIds.map((id) => [`readings ${id}`, (path) => early.request(path)])) });
+  now = late.RECORDED_AT;
+  const { device, caps } = startDevice({
+    api,
+    store: { announcedDay: '2026-10-27', cloudReadings: { tariffs: { electricity: { standingCharges: { '2026-10-28': 60.7 } } } } },
+  });
+  await device.onInit();
+  await settle();
+  await device.updateReadings();
+  assert.equal(caps.get('electricity_yesterday'), null);
+  assert.equal(triggered.filter((t) => t.id === 'cloud_new_day_figures').length, 0);
+
+  now = Date.parse('2026-10-29T23:30:00Z');
+  await device.updateReadings();
+  // 119.97p of the display's cost and 60.7p standing charge
+  assert.equal(caps.get('electricity_yesterday'), 14.114);
+  assert.equal(caps.get('electricity_cost_yesterday'), 1.81);
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_new_day_figures').map((t) => t.tokens), [{
+    date: 'Wed 28 Oct', electricity_kwh: 14.114, electricity_cost: 1.81,
+  }]);
+  assert.deepEqual(device.events.filter((e) => e.text.includes('line up')).map((e) => [e.text, e.count]), [
+    ["Cost for Wed 28 Oct didn't line up with the energy by the deadline (35 different rates), so the figures are shown as they are", 1],
+  ]);
 });
 
 test('stopped and resumed reporting follow the time of the live reading', async () => {
@@ -581,7 +636,7 @@ test('a tariff copy that times out is a cloud event naming the copy', async () =
   await device.onInit();
   await settle();
   const texts = device.getCloudStatus().events.map((e) => e.text);
-  assert.ok(texts.some((t) => /^Tariff from electricity consumption: no answer after [\d.]+ s, so not asked again today$/.test(t)), texts.join('; '));
+  assert.ok(texts.some((t) => /^Tariff from electricity consumption: no answer after [\d.]+ s, so not asked again for 2 hours$/.test(t)), texts.join('; '));
   assert.ok(texts.includes('Tariff from Smart Meter, electricity consumption: 25.63 p/kWh, 60.7 p/day'), texts.join('; '));
 });
 
@@ -693,11 +748,16 @@ test("gas New day's figures: not on the first poll, then once per day, oldest fi
   assert.equal(first.store.announcedDay, '2026-10-26');
   assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 0);
 
-  const gap = startDevice({ api: fakeCloudApi(), gas: true, store: { announcedDay: '2026-10-23' } });
+  // the standing charge was 28.84p on 23 and 28 Oct, so the days between take it
+  const gap = startDevice({
+    api: fakeCloudApi(),
+    gas: true,
+    store: { announcedDay: '2026-10-23', cloudReadings: { tariffs: { gas: { standingCharges: { '2026-10-23': 28.84, '2026-10-28': 28.84 } } } } },
+  });
   await gap.device.onInit();
   await settle();
   assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').map((t) => t.tokens.date), ['Sat 24 Oct', 'Sun 25 Oct', 'Mon 26 Oct']);
-  assert.deepEqual(triggered.find((t) => t.tokens.date === 'Sat 24 Oct').tokens, { date: 'Sat 24 Oct', gas_kwh: 28.081, gas_cost: 2.22 });
+  assert.deepEqual(triggered.find((t) => t.tokens.date === 'Sat 24 Oct').tokens, { date: 'Sat 24 Oct', gas_kwh: 28.081, gas_cost: 2.51 });
   assert.equal(gap.store.announcedDay, '2026-10-26');
 
   // 27 Oct, once its last half hour is unchanged an hour later
@@ -709,6 +769,26 @@ test("gas New day's figures: not on the first poll, then once per day, oldest fi
   now += 60 * 60 * 1000;
   await gap.device.updateReadings();
   assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 4);
+});
+
+test("gas New day's figures waits for the standing charge, then goes out 24 hours after the day is final as energy only", async () => {
+  const { device, caps } = startDevice({ api: fakeCloudApi(), gas: true, store: { announcedDay: '2026-10-25' } });
+  await device.onInit();
+  await settle();
+  // 26 Oct shows straight away, but nothing gives its standing charge
+  assert.equal(caps.get('gas_day_cost'), 0.54);
+  assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 0);
+
+  // 27 Oct is final by now, but waits behind 26 Oct
+  now = RECORDED_AT + DAY - 60 * 1000;
+  await device.updateReadings();
+  assert.equal(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').length, 0);
+
+  now = RECORDED_AT + DAY;
+  await device.updateReadings();
+  assert.deepEqual(triggered.filter((t) => t.id === 'cloud_gas_new_day_figures').map((t) => t.tokens), [
+    { date: 'Mon 26 Oct', gas_kwh: 6.84, gas_cost: 0.54 },
+  ]);
 });
 
 test('gas Data is late fires once when data up to passes 3 days, and the condition follows it', async () => {

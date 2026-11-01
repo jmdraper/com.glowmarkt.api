@@ -9,10 +9,12 @@ const assert = require('node:assert/strict');
 
 const CloudReadings = require('../../lib/cloud/CloudReadings');
 const ImportToday = require('../../lib/cloud/ImportToday');
-const { TariffSource, parseTariff, nextTariffAt } = require('../../lib/cloud/TariffSource');
+const {
+  TariffSource, parseTariff, nextTariffAt, SLOW_RETRY_MS,
+} = require('../../lib/cloud/TariffSource');
 const { selectResources, liveElectricityResource, isDeadEntry } = require('../../lib/cloud/resources');
 const {
-  readingRows, latestCompleteDay, dayTotal, isFinalDay, gasDayFinality, GAS_SETTLED_MS, pounds,
+  readingRows, latestCompleteDay, countedRows, dayTotal, isFinalDay, costAgainstEnergy, gasDayFinality, GAS_SETTLED_MS, pounds,
 } = require('../../lib/cloud/readings');
 const { HALF_HOUR_MS, dayBounds, readingsQueries } = require('../../lib/cloud/days');
 const {
@@ -25,7 +27,10 @@ const ELEC_SMART = ID['electricity.consumption|Smart Meter, electricity consumpt
 const GAS = ID['gas.consumption|gas consumption'];
 const GAS_SMART = ID['gas.consumption|Smart Meter, gas consumption'];
 const EXPORT = ID['electricity.export|active export'];
+const ELEC_COSTS = [ID['electricity.consumption.cost|electricity cost'], ID['electricity.consumption.cost|Smart Meter, electricity cost']];
 const at = (iso) => Date.parse(iso);
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 const lastTime = (id) => recorded('last-time', id).body.data.lastTs * 1000;
 
 async function rowsFor(id, date) {
@@ -188,12 +193,20 @@ test('yesterday and the latest gas day, from the readings layer', async () => {
   const { request } = fakeCloudApi();
   const readings = new CloudReadings({ request, resources: LIVE.resources });
   const figures = await readings.refresh(RECORDED_AT);
+  // the cost lines up with the energy at one rate; the deadline is 23:30 on the day it's reported
   assert.deepEqual(figures.electricityYesterday, {
-    date: '2026-10-27', kWh: 11.196, pounds: 2.87, standingCharge: null, final: true,
+    date: '2026-10-27',
+    kWh: 11.196,
+    pounds: 2.87,
+    standingCharge: null,
+    cost: { linesUp: true, rates: 1 },
+    deadline: at('2026-10-28T23:30:00Z'),
+    final: true,
   });
-  // gas runs to 27 Oct 23:30 exactly: 27 Oct isn't final until a poll an hour later
+  // gas runs to 27 Oct 23:30 exactly: 27 Oct isn't final until a poll an hour
+  // later. 26 Oct's deadline is 24 hours after it was first seen final.
   assert.deepEqual(figures.gasLatestDay, {
-    date: '2026-10-26', kWh: 6.84, pounds: 0.54, standingCharge: null,
+    date: '2026-10-26', kWh: 6.84, pounds: 0.54, standingCharge: null, cost: { linesUp: true, rates: 1 }, deadline: RECORDED_AT + DAY,
   });
   assert.equal(figures.dataUpTo['electricity.consumption'], at('2026-10-28T13:18:00Z'));
   assert.equal(figures.dataUpTo['electricity.export'], at('2026-10-26T23:30:00Z'));
@@ -210,13 +223,9 @@ test("a day's cost includes the standing charge the tariff gave that day, and is
   await readings.fetchTariffs(at('2026-10-27T23:30:30Z'));
   const figures = await readings.refresh(RECORDED_AT);
   // 286.95p of energy and 60.7p standing charge
-  assert.deepEqual(figures.electricityYesterday, {
-    date: '2026-10-27', kWh: 11.196, pounds: 3.48, standingCharge: 60.7, final: true,
-  });
+  assert.deepEqual([figures.electricityYesterday.pounds, figures.electricityYesterday.standingCharge], [3.48, 60.7]);
   // 54.17p of energy and 28.84p standing charge
-  assert.deepEqual(figures.gasLatestDay, {
-    date: '2026-10-26', kWh: 6.84, pounds: 0.83, standingCharge: 28.84,
-  });
+  assert.deepEqual([figures.gasLatestDay.pounds, figures.gasLatestDay.standingCharge], [0.83, 28.84]);
 
   // the standing charges survive a restart
   const restarted = new CloudReadings({ request, resources: LIVE.resources, state: JSON.parse(JSON.stringify(readings)) });
@@ -254,9 +263,96 @@ test('a day with no standing charge takes the one either side when they agree, a
   assert.equal(source.standingChargeOn('2026-11-04'), null);
 });
 
+// Cost against energy
+
+/** A day's counted rows for a resource in a recording, as the readings layer reads them. */
+async function recordedRows(api, id, date) {
+  const rows = [];
+  for (const query of readingsQueries(date, date)) {
+    rows.push(...readingRows(await api.fakeCloudApi().request(`/resource/${id}/readings?${new URLSearchParams(query)}`)));
+  }
+  return countedRows(rows, date, api.recorded('last-time', id).body.data.lastTs * 1000);
+}
+
+test("a day's cost lines up with its energy at one rate, whether both are the display's or the meter's", async () => {
+  const nov1 = recordingApi('display-account-01nov-0700');
+  const elecCost = ELEC_COSTS[0];
+  const gasCost = ID['gas.consumption.cost|gas cost'];
+  for (const date of ['2026-10-30', '2026-10-31']) {
+    assert.deepEqual(costAgainstEnergy(await recordedRows(nov1, ELEC, date), await recordedRows(nov1, elecCost, date)), { linesUp: true, rates: 1 }, `electricity ${date}`);
+    assert.deepEqual(costAgainstEnergy(await recordedRows(nov1, GAS, date), await recordedRows(nov1, gasCost, date)), { linesUp: true, rates: 1 }, `gas ${date}`);
+  }
+  // 28 Oct at 06:30 the next morning: both still the display's, net of export
+  const early = recordingApi('display-account-29oct-0630');
+  assert.deepEqual(costAgainstEnergy(await recordedRows(early, ELEC, '2026-10-28'), await recordedRows(early, elecCost, '2026-10-28')), { linesUp: true, rates: 1 });
+});
+
+test("a cost still the display's against the meter's energy doesn't line up, nor does a cost with no energy", async () => {
+  // 28 Oct: the meter's energy from 15:00, the display's cost from 06:30
+  const late = recordingApi('display-account-29oct-1500');
+  const early = recordingApi('display-account-29oct-0630');
+  const mixed = costAgainstEnergy(await recordedRows(late, ELEC, '2026-10-28'), await recordedRows(early, ELEC_COSTS[0], '2026-10-28'));
+  assert.deepEqual(mixed, { linesUp: false, rates: 35 });
+
+  const t = at('2026-10-28T00:00:00Z');
+  assert.deepEqual(costAgainstEnergy([[t, 0], [t + HALF_HOUR_MS, 1]], [[t, 0.5], [t + HALF_HOUR_MS, 25.63]]), { linesUp: false, rates: 1 });
+  // four time-of-use rates line up; five don't; a half hour with no cost doesn't
+  const rows = (rates) => rates.map((rate, i) => [t + i * HALF_HOUR_MS, rate]);
+  assert.deepEqual(costAgainstEnergy(rows([1, 1, 1, 1]), rows([7.5, 15, 25.63, 30])), { linesUp: true, rates: 4 });
+  assert.deepEqual(costAgainstEnergy(rows([1, 1, 1, 1, 1]), rows([7.5, 15, 25.63, 30, 40])), { linesUp: false, rates: 5 });
+  assert.deepEqual(costAgainstEnergy(rows([1, 1]), rows([25.63])), { linesUp: false, rates: 1 });
+});
+
+test('a lagging cost holds yesterday until it switches; at 23:30 it goes out as it is', async () => {
+  // 28 Oct at 15:00 the next day: the meter's energy, with the display's cost from 06:30 until it switches
+  const late = recordingApi('display-account-29oct-1500');
+  const early = recordingApi('display-account-29oct-0630').fakeCloudApi();
+  let lagging = true;
+  const fromEarly = (path) => (lagging ? early.request(path) : null);
+  const api = late.fakeCloudApi({ overrides: Object.fromEntries(ELEC_COSTS.map((id) => [`readings ${id}`, fromEarly])) });
+  const readings = new CloudReadings({ request: api.request, resources: late.ENTRIES[0].resources, commodity: 'electricity' });
+
+  let yesterday = (await readings.refresh(late.RECORDED_AT)).electricityYesterday;
+  assert.deepEqual([yesterday.date, yesterday.final, yesterday.cost.linesUp], ['2026-10-28', false, false]);
+  yesterday = (await readings.refresh(at('2026-10-29T23:29:00Z'))).electricityYesterday;
+  assert.equal(yesterday.final, false);
+  // at the deadline the display's cost goes out as it is
+  yesterday = (await readings.refresh(at('2026-10-29T23:30:00Z'))).electricityYesterday;
+  assert.deepEqual([yesterday.final, yesterday.pounds], [true, 1.2]);
+
+  // once the cost switches, it's final straight away with the meter's cost
+  lagging = false;
+  yesterday = (await readings.refresh(late.RECORDED_AT + HOUR)).electricityYesterday;
+  assert.deepEqual([yesterday.final, yesterday.cost, yesterday.pounds], [true, { linesUp: true, rates: 1 }, 3.62]);
+});
+
+test("a gas day whose cost doesn't line up waits up to 24 hours, and the device keeps what it shows", async () => {
+  const gasCosts = [ID['gas.consumption.cost|gas cost'], ID['gas.consumption.cost|Smart Meter, gas cost']];
+  // a gas cost charging for half hours that used no gas, as from a lagging copy
+  // (26 Oct's gas is in only two half hours, so rates alone wouldn't show it)
+  const skew = (path) => fakeCloudApi().request(path).then((body) => ({
+    ...body, data: body.data.map(([s, v]) => [s, v || 0.5]),
+  }));
+  let skewed = true;
+  const overrides = Object.fromEntries(gasCosts.map((id) => [`readings ${id}`, (path) => (skewed ? skew(path) : null)]));
+  const readings = new CloudReadings({ request: fakeCloudApi({ overrides }).request, resources: LIVE.resources, commodity: 'gas' });
+  const shown = async (now) => (await readings.refresh(now)).gasLatestDay;
+
+  // 26 Oct is held, and 27 Oct isn't final yet, so there's no new day to show
+  assert.equal(await shown(RECORDED_AT), null);
+  // 27 Oct is final by now, but held too
+  assert.equal(await shown(RECORDED_AT + DAY - 1), null);
+  // 24 hours after 26 Oct was first seen final, it goes out as it is
+  const released = await shown(RECORDED_AT + DAY);
+  assert.deepEqual([released.date, released.cost.linesUp], ['2026-10-26', false]);
+  // once the cost lines up, 27 Oct (no gas, so no rates) goes out without waiting
+  skewed = false;
+  const lined = await shown(RECORDED_AT + DAY + HOUR);
+  assert.deepEqual([lined.date, lined.cost], ['2026-10-27', { linesUp: true, rates: 0 }]);
+});
+
 // Gas days
 
-const HOUR = 60 * 60 * 1000;
 const gasOnly = (overrides) => new CloudReadings({ request: fakeCloudApi({ overrides }).request, resources: LIVE.resources, commodity: 'gas' });
 const gasUpTo = (iso) => {
   const body = { data: { lastTs: at(iso) / 1000 } };
@@ -268,9 +364,7 @@ test("a gas day is final at once when the data runs past it, as on Jon's account
   const readings = new CloudReadings({ request: api.fakeCloudApi().request, resources: api.ENTRIES[0].resources, commodity: 'gas' });
   const { dataUpTo, gasLatestDay } = await readings.refresh(api.RECORDED_AT);
   assert.equal(dataUpTo['gas.consumption'], at('2026-10-29T06:30:00Z'));
-  assert.deepEqual(gasLatestDay, {
-    date: '2026-10-28', kWh: 0, pounds: 0, standingCharge: null,
-  });
+  assert.deepEqual([gasLatestDay.date, gasLatestDay.kWh, gasLatestDay.pounds], ['2026-10-28', 0, 0]);
 });
 
 test('a gas day the data ends with is final once its last half hour is unchanged an hour later', async () => {
@@ -283,9 +377,8 @@ test('a gas day the data ends with is final once its last half hour is unchanged
     request: fakeCloudApi().request, resources: LIVE.resources, commodity: 'gas', state: readings.toJSON(),
   });
   assert.deepEqual(restarted.toJSON().gasSeen, { date: '2026-10-27', last: 0, at: RECORDED_AT });
-  assert.deepEqual((await restarted.refresh(RECORDED_AT + HOUR)).gasLatestDay, {
-    date: '2026-10-27', kWh: 0, pounds: 0, standingCharge: null,
-  });
+  const { gasLatestDay } = await restarted.refresh(RECORDED_AT + HOUR);
+  assert.deepEqual([gasLatestDay.date, gasLatestDay.kWh, gasLatestDay.pounds], ['2026-10-27', 0, 0]);
 });
 
 test('a gas day is not final between 23:30 and midnight while its data comes through the day', async () => {
@@ -354,7 +447,7 @@ test('the tariff comes from one response: electricity and gas rates and standing
   ]);
 });
 
-test('a copy that times out is not asked again that day; the copy that answers is used', async () => {
+test('a copy that times out is not asked again for 2 hours; the copy that answers is used', async () => {
   const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
   const api = fakeCloudApi({ overrides: { [`tariff ${ELEC}`]: timeout } });
   const source = new TariffSource({ copies: [ELEC, ELEC_SMART] });
@@ -364,12 +457,33 @@ test('a copy that times out is not asked again that day; the copy that answers i
   assert.deepEqual(source.attempts.map((a) => [a.id, a.outcome]), [[ELEC, 'slow'], [ELEC_SMART, 'answered']]);
 
   api.calls.length = 0;
-  await source.fetch(api.request, at('2026-10-28T23:00:30Z'));
+  await source.fetch(api.request, RECORDED_AT + HOUR);
   assert.deepEqual(api.calls.map((c) => c.path), [`/resource/${ELEC_SMART}/tariff`]);
 
-  // The next day it may be tried again, after the copy that answered.
-  assert.deepEqual(source.candidates(at('2026-10-29T00:00:30Z')), [ELEC_SMART, ELEC]);
+  // After 2 hours it may be tried again, after the copy that answered, and that survives a restart.
+  assert.deepEqual(source.candidates(RECORDED_AT + SLOW_RETRY_MS - 1), [ELEC_SMART]);
+  assert.deepEqual(source.candidates(RECORDED_AT + SLOW_RETRY_MS), [ELEC_SMART, ELEC]);
   assert.deepEqual(new TariffSource({ copies: [ELEC, ELEC_SMART], ...JSON.parse(JSON.stringify(source)) }).candidates(RECORDED_AT), [ELEC_SMART]);
+});
+
+test("every copy timing out is retried 2 hours later, and that answer gives the day's standing charge", async () => {
+  const timeout = Object.assign(new Error('network timeout'), { type: 'request-timeout' });
+  let hanging = true;
+  const api = fakeCloudApi({ overrides: { tariff: () => (hanging ? timeout : null) } });
+  const source = new TariffSource({ copies: [ELEC, ELEC_SMART] });
+  const t0 = at('2026-10-30T09:00:30Z');
+
+  assert.equal(await source.fetch(api.request, t0), null);
+  assert.deepEqual(source.attempts.map((a) => a.outcome), ['slow', 'slow']);
+  // half an hour later nothing is asked
+  api.calls.length = 0;
+  assert.equal(await source.fetch(api.request, t0 + HALF_HOUR_MS), null);
+  assert.deepEqual(api.calls, []);
+
+  // 2 hours later Glowmarkt answers again
+  hanging = false;
+  assert.deepEqual(await source.fetch(api.request, t0 + SLOW_RETRY_MS), { rate: 25.63, standingCharge: 60.7 });
+  assert.equal(source.standingChargeOn('2026-10-30'), 60.7);
 });
 
 test('a copy the server cuts off is treated like a timeout; other failures are not', async () => {

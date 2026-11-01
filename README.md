@@ -31,7 +31,7 @@ It shows:
 
 * **Power, energy and tariff:** live power, the imported energy total that feeds Homey Energy, and the unit rate.
 * **Electricity today:** energy imported since midnight, from the meter's import register. It needs a reading from just before midnight, so it stays empty until the next midnight after you add the device, or if Homey was off over midnight.
-* **Electricity yesterday** and **Electricity cost yesterday, incl. standing charge:** Glowmarkt first fills each day from your display, then replaces it with the meter's own figures. These show yesterday only once that has happened, and are empty until then.
+* **Electricity yesterday** and **Electricity cost yesterday, incl. standing charge:** Glowmarkt first fills each day from your display, then replaces it with the meter's own figures, the cost separately from the energy. These show yesterday only once both have happened, and are empty until then. If the cost still doesn't match the energy by 23:30, they show the figures as they are, and the Cloud events say so.
 * **Standing charge**, from your tariff in Glowmarkt.
 * **Data up to:** the time of Glowmarkt's latest electricity reading.
 
@@ -42,7 +42,7 @@ Flow cards:
 * *Meter stopped reporting* and *Meter resumed reporting*, and the *Meter is reporting* condition: Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than the device's *Stale after* setting (5 minutes by default).
 * *Account needs attention*, with the reason, and the *Account is OK* condition: fires once when logging in has failed for 30 minutes, or Glowmarkt refuses the meter even after logging in again, and again only after the account has worked in between.
 * *Started exporting* and *Stopped exporting*, with the power, and the *Is exporting* condition: exporting starts once power has been below −50 W for a minute, and stops once it has been above −20 W for a minute.
-* *New day's figures*: once a day, when yesterday's figures are final, with the date, kWh and cost in £ (including the standing charge).
+* *New day's figures*: once a day, when yesterday's figures are final, with the date, kWh and cost in £ (including the standing charge). If the day's standing charge isn't known yet, it waits for it until 23:30, then fires with the energy cost only.
 * *Tariff changed*: the unit rate has changed.
 
 ### Gas meter (cloud)
@@ -59,7 +59,7 @@ The daily figures are checked every hour and the tariff every half hour.
 
 Flow cards:
 
-* *New day's figures*: once for each day of gas as it arrives, with the date, kWh and cost in £ (including the standing charge). If several days arrive at once, it fires once for each, oldest first.
+* *New day's figures*: once for each day of gas as it arrives, with the date, kWh and cost in £ (including the standing charge). If several days arrive at once, it fires once for each, oldest first. A day whose cost doesn't yet match its energy, or whose standing charge isn't known yet, waits for up to 24 hours.
 * *Data is late*, with the days behind, and the *Data is up to date* condition: Glowmarkt's gas data is more than 3 days old. Fires once, and again only after the data has caught up.
 * *Account needs attention* and the *Account is OK* condition, as on the electricity meter.
 

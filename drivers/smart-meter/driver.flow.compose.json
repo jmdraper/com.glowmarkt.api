@@ -116,7 +116,7 @@
         "en": "New day's figures"
       },
       "hint": {
-        "en": "Fires once a day, when Glowmarkt has the meter's own figures for the previous day. The cost includes the day's standing charge, if the app fetched the tariff that day."
+        "en": "Fires once a day, when Glowmarkt has the meter's own figures for the previous day. The cost includes the day's standing charge; if that isn't known by 23:30, it fires with the energy cost only."
       },
       "tokens": [
         {

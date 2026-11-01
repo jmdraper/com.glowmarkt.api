@@ -182,6 +182,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       const yesterday = figures.electricityYesterday && figures.electricityYesterday.final ? figures.electricityYesterday : null;
       await this.setIfChanged('electricity_yesterday', yesterday ? yesterday.kWh : null);
       await this.setIfChanged('electricity_cost_yesterday', yesterday ? yesterday.pounds : null);
+      this.noteCostMismatch(yesterday);
       this.noteEnergyOnlyCost(yesterday);
 
       await this.announceNewDay(figures, now);
@@ -193,16 +194,18 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
   }
 
   /**
-   * Fires New day's figures once per day. Not on the first poll after
-   * installing: a day that's already final then is recorded, not announced.
+   * Fires New day's figures once per day, once the day's standing charge is
+   * known or by its deadline. Not on the first poll after installing: a day
+   * that's already final then is recorded, not announced.
    */
   async announceNewDay(figures, now) {
-    const day = electricityDayToAnnounce(figures, this.announcedDay ?? null);
     if (this.announcedDay === undefined || this.announcedDay === null) {
-      this.announcedDay = day ? day.date : addDays(londonDate(now), -2);
+      const yesterday = figures.electricityYesterday;
+      this.announcedDay = yesterday && yesterday.final ? yesterday.date : addDays(londonDate(now), -2);
       await this.setStoreValue('announcedDay', this.announcedDay).catch(this.error);
       return;
     }
+    const day = electricityDayToAnnounce(figures, this.announcedDay, now);
     if (!day) return;
     this.announcedDay = day.date;
     await this.setStoreValue('announcedDay', day.date).catch(this.error);
