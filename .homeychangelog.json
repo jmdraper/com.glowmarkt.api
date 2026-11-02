@@ -33,6 +33,6 @@
     "en": "New Glow gas meter (local) and Glow electricity meter (local) devices read your Glow display's MQTT feed directly, without the internet, and bring gas into Homey Energy. Fixes for the cloud Display and CAD device: account entries that return errors are skipped, the login renews itself, and Tariff changed now fires. This version needs Homey 12.9.0 or later. Homeys on older firmware stay on version 1.1.7 and don't get the cloud fixes, so update Homey first."
   },
   "1.3.0": {
-    "en": "Local electricity and gas meters, fed directly by your Glow display over MQTT (built-in broker or your own). Cloud electricity and gas devices now show each day's energy and cost including the standing charge, and wait until the figures are final so they match the Bright app. New flow cards: new day's figures, started and stopped exporting, stopped and resumed reporting, account needs attention. A more reliable cloud connection, with a Cloud events list on the settings page for troubleshooting."
+    "en": "Local electricity and gas meters, renamed and now with exporting cards. Cloud electricity and gas devices now show each day's energy and cost including the standing charge, and wait until the figures are final so they match the Bright app. New flow cards: new day's figures, started and stopped exporting, stopped and resumed reporting, account needs attention. A more reliable cloud connection, with a Cloud events list on the settings page for troubleshooting."
   }
 }
