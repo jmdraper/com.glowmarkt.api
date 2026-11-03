@@ -34,5 +34,8 @@
   },
   "1.3.0": {
     "en": "Local electricity and gas meters, renamed and now with exporting cards. Cloud electricity and gas devices now show each day's energy and cost including the standing charge, and wait until the figures are final so they match the Bright app. New flow cards: new day's figures, started and stopped exporting, stopped and resumed reporting, account needs attention. A more reliable cloud connection, with a Cloud events list on the settings page for troubleshooting."
+  },
+  "1.3.1": {
+    "en": "Fixes the cloud electricity meter showing No response while its readings kept arriving. It now rides out a brief dropped connection, and shows as unavailable only after 2 minutes without a live reading."
   }
 }

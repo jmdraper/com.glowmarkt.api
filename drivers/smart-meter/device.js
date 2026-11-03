@@ -16,6 +16,10 @@ const POLLING_SETTINGS = ['username', 'password', 'pollFrequency'];
 const MINUTE_MS = 60 * 1000;
 // half-hourly readings move no faster than this on display accounts
 const READINGS_EVERY_MS = 15 * MINUTE_MS;
+// a live reading failing for less than this, or 3 polls if longer, leaves the device available
+const UNAVAILABLE_AFTER_MS = 2 * MINUTE_MS;
+// a live reading request still running after this fails, so polls can't pile up
+const POWER_TIMEOUT_MS = 30 * 1000;
 
 // added to every device, including ones paired before they existed
 const CAPABILITIES = ['meter_power.imported', 'standing_charge', 'electricity_today', 'electricity_yesterday', 'electricity_cost_yesterday', 'data_up_to'];
@@ -39,7 +43,9 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
     this.setUpCloud();
 
     // Set device unavailable until first successful poll
-    this.setUnavailable().catch(this.error);
+    this.markUnavailable();
+    this.failingSince = Date.now();
+    this.powerPolling = false;
 
     // The stale clock restarts at init unless the meter was already stale, so
     // time the app spent stopped doesn't count as silence.
@@ -88,23 +94,35 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
   /**
    * Live power and the import register, every poll: measure_power,
    * meter_power.imported and Electricity today, and from them whether the
-   * meter is reporting and exporting.
+   * meter is reporting and exporting. A poll still running when the next is
+   * due makes that one skip.
    */
   async updateDevice() {
-    if (this.isAccessRefused()) return;
-    const elec_cons_res = this.getStoreValue('elec_cons_res');
+    if (this.isAccessRefused() || this.powerPolling) return;
+    this.powerPolling = true;
     try {
-      const powerRes = await this.request(`/resource/${elec_cons_res}/current`);
+      await this.pollPower();
+    } finally {
+      this.powerPolling = false;
+    }
+  }
+
+  async pollPower() {
+    const elec_cons_res = this.getStoreValue('elec_cons_res');
+    let live = false;
+    try {
+      const powerRes = await this.request(`/resource/${elec_cons_res}/current`, { timeoutMs: POWER_TIMEOUT_MS });
       if (!powerRes.data?.[0]) throw apiError('Power API returned no data', JSON.stringify(powerRes));
+      live = true;
       this.accessRefusedUntil = null;
-      if (!this.getAvailable()) this.setAvailable().catch(this.error);
+      this.failingSince = null;
+      await this.markAvailable();
       const [readingAt, watts] = powerRes.data[0];
       this.setCapabilityValue('measure_power', watts).catch(this.error);
       await this.powerReading(readingAt, watts, Date.now());
 
-      const energyRes = await this.request(`/resource/${elec_cons_res}/meterread`);
+      const energyRes = await this.request(`/resource/${elec_cons_res}/meterread`, { timeoutMs: POWER_TIMEOUT_MS });
       if (!energyRes.data?.[0]) throw apiError('Meter read API returned no data', JSON.stringify(energyRes));
-      if (!this.getAvailable()) this.setAvailable().catch(this.error);
       const [registerAt, wh] = energyRes.data[0];
       const kWh = wh / 1000;
       this.setCapabilityValue('meter_power.imported', kWh).catch(this.error);
@@ -113,12 +131,30 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
     } catch (error) {
       this.error('updateDevice failed:', error.message);
       this.recordError('power', error);
-      // an access refusal has already set the device unavailable with its own message
-      if (!error.accessRefused && this.getAvailable()) {
-        this.log('Device set as unavailable');
-        this.setUnavailable().catch(this.error);
-      }
+      // A live reading that arrived keeps the device available, and an access
+      // refusal has already set it unavailable with its own message.
+      if (live || error.accessRefused) return;
+      if (this.failingSince === null) this.failingSince = Date.now();
+      await this.checkAvailability(Date.now());
     }
+  }
+
+  /**
+   * Available while the live reading arrives, set again once a minute in case
+   * an earlier call didn't reach Homey. Unavailable once it has been failing
+   * for the longer of 2 minutes or 3 polls, so one dropped request doesn't
+   * show the device as not responding.
+   */
+  async checkAvailability(now) {
+    if (this.isAccessRefused()) return;
+    if (this.failingSince === null) {
+      await this.markAvailable({ force: true });
+      return;
+    }
+    const failingFor = now - this.failingSince;
+    if (failingFor < Math.max(UNAVAILABLE_AFTER_MS, 3 * this.pollFrequency)) return;
+    const lastError = this.cloudStatus.lastError ? `, last error: ${this.cloudStatus.lastError.message}` : '';
+    await this.markUnavailable(`no live reading for ${Math.round(failingFor / MINUTE_MS)} minutes${lastError}`);
   }
 
   /**
@@ -150,6 +186,7 @@ class GlowmarktUKSmartMeter_device extends CloudDevice {
       await this.driver.cards.stopped.trigger(this, { minutes: stopped.minutesSince }).catch(this.error);
     }
     await this.accountEvent(this.health.check(now));
+    await this.checkAvailability(now);
     await this.saveState();
   }
 

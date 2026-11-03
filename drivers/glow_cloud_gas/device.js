@@ -44,7 +44,7 @@ class GlowCloudGasDevice extends CloudDevice {
       const readings = await this.loadReadings();
       const now = Date.now();
       const figures = await readings.refresh(now);
-      if (!this.getAvailable()) this.setAvailable().catch(this.error);
+      await this.markAvailable();
 
       const lastTime = figures.dataUpTo['gas.consumption'];
       await this.setIfChanged('data_up_to', dateTimeLabel(lastTime));

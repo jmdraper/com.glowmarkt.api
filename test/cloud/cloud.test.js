@@ -675,6 +675,166 @@ test('a tariff copy that times out is a cloud event naming the copy', async () =
   assert.ok(texts.includes('Tariff from Smart Meter, electricity consumption: 25.63 p/kWh, 60.7 p/day'), texts.join('; '));
 });
 
+// Availability. Homey keeps the availability people see; the SDK keeps a copy
+// that getAvailable() returns. The SDK docs don't say when that copy changes,
+// so this models the SDK changing it when the call is made, and Homey only
+// when the call succeeds.
+
+function homeyAvailability(device, { setAvailableFailures = 0 } = {}) {
+  const state = { homey: true, flag: true, setAvailableFailures };
+  device.getAvailable = () => state.flag;
+  device.setUnavailable = async () => {
+    state.flag = false;
+    state.homey = false;
+  };
+  device.setAvailable = async () => {
+    state.flag = true;
+    if (state.setAvailableFailures > 0) {
+      state.setAvailableFailures -= 1;
+      throw new Error('Timeout after 30000ms');
+    }
+    state.homey = true;
+  };
+  return state;
+}
+
+// /current fails while control.failures is above 0, once per request
+function failingCurrent() {
+  const control = { failures: 0 };
+  const api = fakeCloudApi({
+    overrides: {
+      current: () => {
+        if (control.failures <= 0) return undefined;
+        control.failures -= 1;
+        return Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+      },
+    },
+  });
+  return { api, control };
+}
+
+async function availableDevice({ pollFrequency } = {}) {
+  const { api, control } = failingCurrent();
+  const started = startDevice({ api, pollFrequency, store: { elec_cons_res: ID['electricity.consumption|electricity consumption'] } });
+  const availability = homeyAvailability(started.device);
+  await started.device.onInit();
+  await settle();
+  assert.equal(availability.homey, true, 'available after the first poll');
+  return {
+    ...started, api, control, availability,
+  };
+}
+
+/** Runs `count` polls `seconds` apart, the first `seconds` from now. */
+async function polls(device, count, seconds = 10) {
+  for (let poll = 0; poll < count; poll += 1) {
+    now += seconds * 1000;
+    await device.updateDevice();
+  }
+}
+
+function eventTexts(device) {
+  return device.getCloudStatus().events.map((e) => e.text);
+}
+
+test('a single failed live reading leaves the device available', async () => {
+  const { device, control, availability } = await availableDevice();
+  control.failures = 1;
+  await polls(device, 1);
+  assert.equal(availability.homey, true, 'unavailable after one failed poll');
+  await polls(device, 1);
+  assert.equal(availability.homey, true);
+});
+
+test('the device is unavailable once the live reading has failed for 2 minutes, and available again with the next one', async () => {
+  const { device, caps, control, availability } = await availableDevice();
+  control.failures = 13;
+  await polls(device, 12);
+  assert.equal(availability.homey, true, 'unavailable before 2 minutes had passed');
+  await polls(device, 1);
+  assert.equal(availability.homey, false, 'still available after 2 minutes of failures');
+  caps.set('meter_power.imported', null);
+  await polls(device, 1);
+  assert.ok(caps.get('meter_power.imported') > 0, 'the reading arrived');
+  assert.equal(availability.homey, true, 'still unavailable after the next live reading');
+  const texts = eventTexts(device);
+  assert.ok(texts.includes('Available again after 1 minute'), texts.join('; '));
+  assert.ok(texts.includes('Unavailable: no live reading for 2 minutes, last error: socket hang up'), texts.join('; '));
+});
+
+test('with polls a minute apart, the device stays available for 3 failed polls', async () => {
+  const { device, control, availability } = await availableDevice({ pollFrequency: 60 });
+  control.failures = 4;
+  await polls(device, 3, 60);
+  assert.equal(availability.homey, true, 'unavailable before 3 polls had passed');
+  await polls(device, 1, 60);
+  assert.equal(availability.homey, false, 'still available after 3 polls of failures');
+});
+
+test('a live reading inside the 2 minutes starts them again', async () => {
+  const { device, control, availability } = await availableDevice();
+  control.failures = 11;
+  await polls(device, 11);
+  await polls(device, 1);
+  control.failures = 11;
+  await polls(device, 11);
+  assert.equal(availability.homey, true);
+});
+
+test('a device receiving live readings is available, even after a setAvailable() call fails', async () => {
+  const { device, caps, control, availability } = await availableDevice();
+  control.failures = 13;
+  await polls(device, 13);
+  assert.equal(availability.homey, false, 'still available after 2 minutes of failures');
+  // The next setAvailable() fails, as an SDK call can when Homey is busy.
+  availability.setAvailableFailures = 1;
+  await polls(device, 10);
+  await settle();
+  assert.ok(caps.get('meter_power.imported') > 0, 'readings kept arriving');
+  assert.equal(availability.homey, true, 'still unavailable after ten successful live readings');
+  assert.ok(eventTexts(device).includes('Setting the device available failed: Timeout after 30000ms, so trying again'));
+});
+
+test('once a minute, a device whose live reading is working is set available again', async () => {
+  const { device, availability } = await availableDevice();
+  // an earlier call reached Homey out of order, say
+  availability.homey = false;
+  await polls(device, 3);
+  assert.equal(availability.homey, false, 'polls set it available though it was confirmed');
+  await device.everyMinute();
+  assert.equal(availability.homey, true, 'still unavailable after the minute check');
+});
+
+test('a refused device stays unavailable through the minute check', async () => {
+  const { device, availability } = await availableDevice();
+  device.accessRefusedUntil = now + 60 * 60 * 1000;
+  await device.markUnavailable('Glowmarkt refused access', 'cloud.accessRefused');
+  await device.everyMinute();
+  assert.equal(availability.homey, false);
+});
+
+test('a failing meter read alone leaves the device available', async () => {
+  const failing = fakeCloudApi({ overrides: { meterread: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) } });
+  const { device } = startDevice({ api: failing, store: { elec_cons_res: ID['electricity.consumption|electricity consumption'] } });
+  const availability = homeyAvailability(device);
+  await device.onInit();
+  await settle();
+  await polls(device, 20);
+  await device.everyMinute();
+  assert.equal(availability.homey, true);
+});
+
+test('live reading requests time out after 30 s, and a poll still running makes the next one skip', async () => {
+  const { device, api } = await availableDevice();
+  const before = api.calls.length;
+  const first = device.updateDevice();
+  await device.updateDevice();
+  await first;
+  const made = api.calls.slice(before);
+  assert.deepEqual(made.map((c) => c.path.split('/').pop()), ['current', 'meterread']);
+  assert.ok(made.every((c) => c.options.timeoutMs === 30000), JSON.stringify(made.map((c) => c.options)));
+});
+
 // The cloud gas device
 
 const GAS = ID['gas.consumption|gas consumption'];

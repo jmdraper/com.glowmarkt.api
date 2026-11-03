@@ -37,6 +37,8 @@ It shows:
 
 Only the power and imported energy total feed Homey Energy.
 
+The device shows as unavailable once Glowmarkt's live power reading has failed for 2 minutes, or for three polls if you poll less often than every 40 s, and is available again with the next reading. A single dropped request doesn't change it. The Cloud events list each change, with the reason.
+
 Flow cards:
 
 * *Meter stopped reporting* and *Meter resumed reporting*, and the *Meter is reporting* condition: Glowmarkt's live power reading hasn't moved, or couldn't be fetched, for longer than the device's *Stale after* setting (5 minutes by default).
